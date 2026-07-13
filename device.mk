@@ -53,3 +53,6 @@ $(call soong_config_set_bool,qti_vibrator,use_effect_stream,true)
 
 # Include MIUI Camera (Leica) configuration
 $(call inherit-product-if-exists, device/xiaomi/miuicamera-cupid/device.mk)
+
+# GameBar Performance Overlay
+$(call inherit-product, packages/apps/GameBar/gamebar.mk)
