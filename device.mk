@@ -50,3 +50,6 @@ PRODUCT_COPY_FILES += \
 # Vibrator
 $(call soong_config_set,qti_vibrator,effect_lib,libqtivibratoreffect.xiaomi)
 $(call soong_config_set_bool,qti_vibrator,use_effect_stream,true)
+
+# Include MIUI Camera (Leica) configuration
+$(call inherit-product-if-exists, device/xiaomi/miuicamera-cupid/device.mk)
