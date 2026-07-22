@@ -56,7 +56,3 @@ $(call inherit-product-if-exists, device/xiaomi/miuicamera-cupid/device.mk)
 
 # GameBar Performance Overlay
 $(call inherit-product, packages/apps/GameBar/gamebar.mk)
-
-# Include LineageOS APNs
-PRODUCT_PACKAGES += \
-    apns-conf.xml
