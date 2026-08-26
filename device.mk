@@ -22,7 +22,6 @@ PRODUCT_COPY_FILES += \
 
 # Overlay
 PRODUCT_PACKAGES += \
-    ApertureResMondrian \
     FrameworksResMondrian \
     FrameworksResMondrianGlobal \
     LineageResMondrian \
