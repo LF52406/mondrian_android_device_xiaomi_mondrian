@@ -50,5 +50,8 @@ PRODUCT_COPY_FILES += \
 $(call soong_config_set,qti_vibrator,effect_lib,libqtivibratoreffect.xiaomi)
 $(call soong_config_set_bool,qti_vibrator,use_effect_stream,true)
 
-# Include MIUI Camera (Leica) configuration
+# Include MIUI Camera
 $(call inherit-product-if-exists, device/xiaomi/miuicamera-cupid/device.mk)
+
+# Remove default camera
+PRODUCT_PACKAGES_REMOVE += Aperture
