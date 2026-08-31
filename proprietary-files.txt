@@ -1065,7 +1065,7 @@ vendor/etc/thermal-4k.conf
 vendor/etc/thermal-8k.conf
 vendor/etc/thermal-camera.conf
 vendor/etc/thermal-cclassvideo.conf
-vendor/etc/thermal-cgame.conf
+vendor/etc/thermal-cgame.conf|d7e58354d4817b298ab6c52148caca46f56bf41c
 vendor/etc/thermal-chg-only.conf
 vendor/etc/thermal-class0.conf
 vendor/etc/thermal-cmgame.conf
@@ -1081,7 +1081,7 @@ vendor/etc/thermal-map.conf
 vendor/etc/thermal-mgame.conf
 vendor/etc/thermal-navigation.conf
 vendor/etc/thermal-nolimits.conf
-vendor/etc/thermal-normal.conf
+vendor/etc/thermal-normal.conf|c28076da07d1e66981437e5ba20be2d0f439346d
 vendor/etc/thermal-per-cclassvideo.conf
 vendor/etc/thermal-per-cgame.conf
 vendor/etc/thermal-per-class0.conf
@@ -1090,7 +1090,7 @@ vendor/etc/thermal-per-normal.conf
 vendor/etc/thermal-per-video.conf
 vendor/etc/thermal-phone.conf
 vendor/etc/thermal-region-map.conf
-vendor/etc/thermal-tgame.conf
+vendor/etc/thermal-tgame.conf|66359548644569d3ea1d1c9bf7aca0210deb2210
 vendor/etc/thermal-video.conf
 vendor/etc/thermal-videochat.conf
 vendor/etc/thermal-yuanshen.conf
