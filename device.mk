@@ -47,6 +47,18 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/properties/build_GL.prop:$(TARGET_COPY_OUT_RECOVERY)/root/vendor/odm/etc/build_GL.prop
 
 # Vibrator
+PRODUCT_COPY_FILES += \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_0.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_0.bin \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_1.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_1.bin \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_2.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_2.bin \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_3.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_3.bin \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_4.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_4.bin \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_5.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_5.bin \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_6.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_6.bin \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_7.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_7.bin \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_8.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_8.bin \
+    vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_9.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_9.bin
+
 $(call soong_config_set,qti_vibrator,effect_lib,libqtivibratoreffect.xiaomi)
 $(call soong_config_set_bool,qti_vibrator,use_effect_stream,true)
 
