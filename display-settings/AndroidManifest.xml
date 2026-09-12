@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The LineageOS Project; SPDX-License-Identifier: Apache-2.0 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.lineageos.mondrian.display"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS_FULL" />
+    <!-- Required by UserManager.getAliveUsers to preserve every full user's UI scale. -->
+    <uses-permission android:name="android.permission.MANAGE_USERS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.READ_SEARCH_INDEXABLES" />
+
+    <application
+        android:label="@string/resolution_title"
+        android:allowBackup="false"
+        android:defaultToDeviceProtectedStorage="true"
+        android:directBootAware="true"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SubSettingsBase.Expressive">
+
+        <activity
+            android:name=".ResolutionActivity"
+            android:label="@string/resolution_title"
+            android:exported="true"
+            android:permission="android.permission.WRITE_SECURE_SETTINGS">
+            <intent-filter>
+                <action android:name="com.android.settings.action.IA_SETTINGS" />
+            </intent-filter>
+            <meta-data android:name="com.android.settings.category"
+                android:value="com.android.settings.category.ia.display" />
+            <meta-data android:name="com.android.settings.keyhint"
+                android:value="mondrian_resolution" />
+            <meta-data android:name="com.android.settings.order" android:value="-10" />
+            <meta-data android:name="com.android.settings.profile"
+                android:value="primary_profile_only" />
+            <meta-data android:name="com.android.settings.summary_uri"
+                android:value="content://org.lineageos.mondrian.display/get_dynamic_summary/mondrian_resolution" />
+        </activity>
+
+        <receiver android:name=".ResolutionReceiver"
+            android:exported="false" android:singleUser="true">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.USER_INITIALIZE" />
+                <action android:name="android.intent.action.USER_ADDED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <provider android:name=".ResolutionSearchProvider"
+            android:authorities="org.lineageos.mondrian.display"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.READ_SEARCH_INDEXABLES">
+            <intent-filter>
+                <action android:name="android.content.action.SEARCH_INDEXABLES_PROVIDER" />
+            </intent-filter>
+        </provider>
+    </application>
+</manifest>

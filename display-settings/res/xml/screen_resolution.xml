@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The LineageOS Project; SPDX-License-Identifier: Apache-2.0 -->
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <com.android.settingslib.widget.SelectorWithWidgetPreference
+        android:key="fhd"
+        android:title="FHD+"
+        android:summary="@string/resolution_fhd_summary"
+        android:persistent="false" />
+    <com.android.settingslib.widget.SelectorWithWidgetPreference
+        android:key="wqhd"
+        android:title="WQHD+"
+        android:summary="@string/resolution_wqhd_summary"
+        android:persistent="false" />
+    <com.android.settingslib.widget.FooterPreference
+        android:key="resolution_footer"
+        android:title="@string/resolution_footer"
+        android:selectable="false" />
+</PreferenceScreen>
