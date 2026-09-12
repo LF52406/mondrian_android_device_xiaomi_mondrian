@@ -1,0 +1,4 @@
+# PreferenceFragment is created by class name when restored after a density change.
+-keep public class org.lineageos.mondrian.display.ResolutionFragment {
+    public <init>();
+}

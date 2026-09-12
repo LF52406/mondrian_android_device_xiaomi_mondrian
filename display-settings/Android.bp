@@ -1,0 +1,25 @@
+// Copyright (C) 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+android_app {
+    name: "MondrianDisplaySettings",
+    defaults: ["SettingsLibDefaults", "platform_app_defaults"],
+    srcs: ["src/**/*.java"],
+    resource_dirs: ["res"],
+    certificate: "platform",
+    platform_apis: true,
+    system_ext_specific: true,
+    privileged: true,
+    static_libs: ["org.lineageos.settings.resources"],
+    required: ["privapp-permissions-mondrian-display.xml"],
+    optimize: {
+        proguard_flags_files: ["proguard.flags"],
+    },
+}
+
+prebuilt_etc {
+    name: "privapp-permissions-mondrian-display.xml",
+    src: "permissions/privapp-permissions-mondrian-display.xml",
+    sub_dir: "permissions",
+    system_ext_specific: true,
+}

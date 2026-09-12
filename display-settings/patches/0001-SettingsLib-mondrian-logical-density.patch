@@ -1,0 +1,38 @@
+diff --git a/packages/SettingsLib/src/com/android/settingslib/display/DisplayDensityUtils.java b/packages/SettingsLib/src/com/android/settingslib/display/DisplayDensityUtils.java
+index 0d7f03e1..4b3c67ec 100644
+--- a/packages/SettingsLib/src/com/android/settingslib/display/DisplayDensityUtils.java
++++ b/packages/SettingsLib/src/com/android/settingslib/display/DisplayDensityUtils.java
+@@ -417,6 +417,20 @@ public class DisplayDensityUtils {
+      */
+-    private static int getDefaultDensityForDisplay(int displayId) {
++    public static int getDefaultDensityForDisplay(int displayId) {
+         try {
+             final IWindowManager wm = WindowManagerGlobal.getWindowManagerService();
+-            return wm.getInitialDisplayDensity(displayId);
++            final int nativeDensity = wm.getInitialDisplayDensity(displayId);
++            // Mondrian retains native panel timings while rendering at a smaller logical size.
++            // Screen zoom's presets and reset must use the corresponding logical default DPI.
++            if (displayId == Display.DEFAULT_DISPLAY
++                    && "mondrian".equals(android.os.Build.DEVICE)) {
++                final android.graphics.Point initial = new android.graphics.Point();
++                final android.graphics.Point current = new android.graphics.Point();
++                wm.getInitialDisplaySize(displayId, initial);
++                wm.getBaseDisplaySize(displayId, current);
++                if (initial.x == 1440 && initial.y == 3200
++                        && current.x == 1080 && current.y == 2400) {
++                    return Math.round(nativeDensity * (1080f / 1440f));
++                }
++            }
++            return nativeDensity;
+         } catch (RemoteException exc) {
+@@ -450,3 +464,9 @@ public class DisplayDensityUtils {
+                     final IWindowManager wm = WindowManagerGlobal.getWindowManagerService();
+-                    wm.clearForcedDisplayDensityForUser(displayId, userId);
++                    final int defaultDensity = getDefaultDensityForDisplay(displayId);
++                    if (defaultDensity > 0
++                            && defaultDensity != wm.getInitialDisplayDensity(displayId)) {
++                        wm.setForcedDisplayDensityForUser(displayId, defaultDensity, userId);
++                    } else {
++                        wm.clearForcedDisplayDensityForUser(displayId, userId);
++                    }
+                 }
