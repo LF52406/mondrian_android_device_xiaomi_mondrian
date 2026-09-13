@@ -1,0 +1,134 @@
+diff --git a/cmds/bootanimation/BootAnimation.cpp b/cmds/bootanimation/BootAnimation.cpp
+--- a/cmds/bootanimation/BootAnimation.cpp
++++ b/cmds/bootanimation/BootAnimation.cpp
+@@ -46,7 +46,8 @@
+ 
+ #include <android-base/properties.h>
+ 
+-#include <ui/DisplayMode.h>
++#include <ui/DisplayMode.h>
++#include <ui/DisplayState.h>
+ #include <ui/PixelFormat.h>
+ #include <ui/Rect.h>
+ #include <ui/Region.h>
+@@ -69,8 +70,14 @@
+ 
+ namespace android {
+ 
+-using ui::DisplayMode;
+-
++using ui::DisplayMode;
++
++static constexpr int MONDRIAN_FHD_WIDTH = 1080;
++static constexpr int MONDRIAN_FHD_HEIGHT = 2400;
++static constexpr int MONDRIAN_WQHD_WIDTH = 1440;
++static constexpr int MONDRIAN_WQHD_HEIGHT = 3200;
++static constexpr int64_t LOGICAL_GEOMETRY_POLL_INTERVAL_MS = 100;
++
+ static const char OEM_BOOTANIMATION_FILE[] = "/oem/media/bootanimation.zip";
+ static const char PRODUCT_BOOTANIMATION_DIR[] = "/product/media/";
+ static const char PRODUCT_BOOTANIMATION_DARK_FILE[] = "bootanimation-dark.zip";
+@@ -208,12 +215,14 @@
+     ATRACE_CALL();
+     mSession = sp<SurfaceComposerClient>::make();
+ 
+-    std::string powerCtl = android::base::GetProperty("sys.powerctl", "");
+-    if (powerCtl.empty()) {
+-        mShuttingDown = false;
+-    } else {
+-        mShuttingDown = true;
+-    }
++    std::string powerCtl = android::base::GetProperty("sys.powerctl", "");
++    if (powerCtl.empty()) {
++        mShuttingDown = false;
++    } else {
++        mShuttingDown = true;
++    }
++    mFollowLogicalDisplayGeometry =
++            android::base::GetProperty("ro.product.device", "") == "mondrian";
+     ALOGD("%sAnimationStartTiming start time: %" PRId64 "ms", mShuttingDown ? "Shutdown" : "Boot",
+             elapsedRealtime());
+ }
+@@ -1761,12 +1770,55 @@
+     return true;
+ }
+ 
+-void BootAnimation::processDisplayEvents() {
+-    ATRACE_CALL();
+-    // This will poll mDisplayEventReceiver and if there are new events it'll call
+-    // displayEventCallback synchronously.
+-    mLooper->pollOnce(0);
+-}
++void BootAnimation::processDisplayEvents() {
++    ATRACE_CALL();
++    // This will poll mDisplayEventReceiver and if there are new events it'll call
++    // displayEventCallback synchronously.
++    mLooper->pollOnce(0);
++    updateLogicalDisplayGeometry();
++}
++
++void BootAnimation::updateLogicalDisplayGeometry() {
++    ATRACE_CALL();
++    if (!mFollowLogicalDisplayGeometry || mShuttingDown || mDisplays.empty()) {
++        return;
++    }
++
++    const int64_t now = elapsedRealtime();
++    if (mLastLogicalGeometryCheckMs >= 0
++            && now - mLastLogicalGeometryCheckMs < LOGICAL_GEOMETRY_POLL_INTERVAL_MS) {
++        return;
++    }
++    mLastLogicalGeometryCheckMs = now;
++
++    auto& display = mDisplays.front();
++    ui::DisplayState displayState;
++    const status_t error =
++            SurfaceComposerClient::getDisplayState(display.displayToken, &displayState);
++    if (error != NO_ERROR) {
++        SLOGV("mondrian: failed to query logical display geometry: %d", error);
++        return;
++    }
++
++    // WindowManager's forced size is represented by SurfaceFlinger's layer-stack space.
++    // Follow only the two geometries exposed by MondrianDisplaySettings. Ignore transient
++    // projections, rotation and any unexpected state rather than changing the display itself.
++    if (displayState.orientation != ui::ROTATION_0) {
++        return;
++    }
++    const int logicalWidth = displayState.layerStackSpaceRect.width;
++    const int logicalHeight = displayState.layerStackSpaceRect.height;
++    const bool supportedGeometry =
++            (logicalWidth == MONDRIAN_FHD_WIDTH && logicalHeight == MONDRIAN_FHD_HEIGHT)
++            || (logicalWidth == MONDRIAN_WQHD_WIDTH && logicalHeight == MONDRIAN_WQHD_HEIGHT);
++    if (!supportedGeometry || (logicalWidth == display.width && logicalHeight == display.height)) {
++        return;
++    }
++
++    SLOGI("mondrian: boot animation logical geometry %dx%d -> %dx%d", display.width,
++          display.height, logicalWidth, logicalHeight);
++    resizeSurface(logicalWidth, logicalHeight, display);
++}
+ 
+ void BootAnimation::handleViewport(nsecs_t timestep, const Display& display) {
+     ATRACE_CALL();
+diff --git a/cmds/bootanimation/BootAnimation.h b/cmds/bootanimation/BootAnimation.h
+--- a/cmds/bootanimation/BootAnimation.h
++++ b/cmds/bootanimation/BootAnimation.h
+@@ -183,10 +183,13 @@
+ 
+     // Display event handling
+     class DisplayEventCallback;
+-    std::unique_ptr<DisplayEventReceiver> mDisplayEventReceiver;
+-    sp<Looper> mLooper;
+-    int displayEventCallback(int fd, int events, void* data);
+-    void processDisplayEvents();
++    std::unique_ptr<DisplayEventReceiver> mDisplayEventReceiver;
++    sp<Looper> mLooper;
++    bool mFollowLogicalDisplayGeometry = false;
++    int64_t mLastLogicalGeometryCheckMs = -1;
++    int displayEventCallback(int fd, int events, void* data);
++    void processDisplayEvents();
++    void updateLogicalDisplayGeometry();
+ 
+     status_t initTexture(Texture* texture, AssetManager& asset, const char* name,
+         bool premultiplyAlpha = true);
