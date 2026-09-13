@@ -7,8 +7,16 @@
 # Security patch level
 VENDOR_SECURITY_PATCH := 2026-02-01
 
+# Production Verified Boot profile
+MONDRIAN_SECURE_AVB := true
+
 # Inherit from xiaomi sm8450-common
 include device/xiaomi/sm8450-common/BoardConfigCommon.mk
+
+# Fail closed if the paired sm8450-common secure AVB support is missing.
+ifeq ($(MONDRIAN_SECURE_AVB_CONFIGURED),)
+$(error mondrian secure AVB requires the paired sm8450-common production AVB profile)
+endif
 
 # Inherit from the proprietary version
 include vendor/xiaomi/mondrian/BoardConfigVendor.mk
