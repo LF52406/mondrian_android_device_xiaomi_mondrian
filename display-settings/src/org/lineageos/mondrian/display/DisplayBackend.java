@@ -10,9 +10,11 @@ import android.content.pm.UserInfo;
 import android.graphics.Point;
 import android.hardware.display.DisplayManager;
 import android.os.Build;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
+import android.util.Log;
 import android.view.Display;
 import android.view.IWindowManager;
 import android.view.WindowManagerGlobal;
@@ -26,6 +28,8 @@ import java.util.Map;
 import java.util.Set;
 
 final class DisplayBackend implements ResolutionEngine.Backend {
+    private static final String TAG = ResolutionController.TAG;
+
     private final Context mContext;
     private final IWindowManager mWm = WindowManagerGlobal.getWindowManagerService();
     private final UserManager mUsers;
@@ -38,22 +42,63 @@ final class DisplayBackend implements ResolutionEngine.Backend {
     boolean supported() throws Exception {
         Point nativeSize = new Point();
         mWm.getInitialDisplaySize(Display.DEFAULT_DISPLAY, nativeSize);
-        Display display = mContext.getSystemService(DisplayManager.class)
-                .getDisplay(Display.DEFAULT_DISPLAY);
-        return "mondrian".equals(Build.DEVICE) && display != null
-                && display.getType() == Display.TYPE_INTERNAL
-                && nativeSize.x == ResolutionEngine.NATIVE_WIDTH
+
+        DisplayManager displayManager = mContext.getSystemService(DisplayManager.class);
+        Display display = displayManager != null
+                ? displayManager.getDisplay(Display.DEFAULT_DISPLAY)
+                : null;
+
+        boolean internal = display != null && display.getType() == Display.TYPE_INTERNAL;
+        boolean nativeSizeMatches = nativeSize.x == ResolutionEngine.NATIVE_WIDTH
                 && nativeSize.y == ResolutionEngine.NATIVE_HEIGHT;
+
+        if (!internal || !nativeSizeMatches) {
+            Log.w(TAG, "Unsupported display: buildDevice=" + Build.DEVICE
+                    + ", vendorDevice="
+                    + SystemProperties.get("ro.product.vendor.device", "")
+                    + ", displayType=" + (display != null ? display.getType() : -1)
+                    + ", initialSize=" + nativeSize.x + "x" + nativeSize.y);
+            return false;
+        }
+
+        // Build.DEVICE is process-local and may be rewritten by ROM/root spoofing.
+        // This app is built only for mondrian; validate the actual display capability instead.
+        if (!"mondrian".equals(Build.DEVICE)) {
+            Log.i(TAG, "Ignoring spoofed Build.DEVICE=" + Build.DEVICE
+                    + "; physical mondrian display capability is valid");
+        }
+        return true;
     }
 
     @Override
     public void checkCanChange() throws Exception {
-        if (!supported()) throw new IllegalStateException("Unsupported display");
-        // Size is global. Only the foreground device owner may change it; profiles/guests may not.
-        if (UserHandle.myUserId() != UserHandle.USER_SYSTEM
-                || ActivityManager.getCurrentUser() != UserHandle.USER_SYSTEM
-                || mContext.getSystemService(KeyguardManager.class).isKeyguardLocked()) {
-            throw new SecurityException("Resolution requires the unlocked device owner");
+        if (!supported()) {
+            throw new IllegalStateException("Unsupported display");
+        }
+
+        // Size is global. Only the foreground system owner may change it.
+        int appUser = UserHandle.myUserId();
+        if (appUser != UserHandle.USER_SYSTEM) {
+            Log.w(TAG, "Resolution denied: appUser=" + appUser
+                    + ", expected=" + UserHandle.USER_SYSTEM);
+            throw new SecurityException("Resolution requires the system owner process");
+        }
+
+        int currentUser = ActivityManager.getCurrentUser();
+        if (currentUser != UserHandle.USER_SYSTEM) {
+            Log.w(TAG, "Resolution denied: currentUser=" + currentUser
+                    + ", expected=" + UserHandle.USER_SYSTEM);
+            throw new SecurityException("Resolution requires the foreground device owner");
+        }
+
+        KeyguardManager keyguard = mContext.getSystemService(KeyguardManager.class);
+        if (keyguard == null) {
+            Log.w(TAG, "Resolution denied: KeyguardManager unavailable");
+            throw new IllegalStateException("Keyguard service unavailable");
+        }
+        if (keyguard.isKeyguardLocked()) {
+            Log.w(TAG, "Resolution denied: keyguard is locked");
+            throw new SecurityException("Resolution requires an unlocked device");
         }
     }
 
