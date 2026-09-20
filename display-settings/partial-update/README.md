@@ -12,7 +12,7 @@ Apply the complete set before building:
 | Project in the ROM checkout | Revision |
 | --- | --- |
 | `kernel/xiaomi/sm8450-devicetrees` | existing `99f1330d8dce0c80de5a19f425d0a118b2eb7fe3` |
-| `kernel/xiaomi/sm8450-modules` | existing `5c2241fef7fb1bd8630a245633f661f882c0bda3`, then `3dbfe7a002830a17baafa0bd12334f7a91e680c6` |
+| `kernel/xiaomi/sm8450-modules` | existing `5c2241fef7fb1bd8630a245633f661f882c0bda3`, then `3dbfe7a002830a17baafa0bd12334f7a91e680c6`, then `73dc7c9abe4ba4076e4c00235182fa455befae3e` |
 | `hardware/qcom-caf/sm8450/display` | apply `display-settings/patches/0003-M11A-partial-update-HWC-SDM.patch` with `apply-partial-update-display-patch.sh` |
 | `device/xiaomi/mondrian` | this feature branch, including Settings, SELinux, diagnostics and the HWC/SDM patch |
 
@@ -40,8 +40,9 @@ patch into the display HAL checkout, and runs the production ROI host regression
 suite. The lower-level `apply-partial-update-display-patch.sh` remains available
 when only the display HAL patch needs to be applied.
 
-The helpers are repeatable. It detects an already applied patch, refuses to touch
-dirty target files, checks the patch before applying it, and fails explicitly if
+The helpers are repeatable. The HAL helper upgrades the previous 7eb3839 patch
+in place (committed or uncommitted), detects the final patch, preserves unrelated
+edits, checks applicability, and fails explicitly if
 the current HAL API is incompatible. Applying only Settings or only the kernel
 does not install the complete feature. Resolve the existing SettingsLib dependency
 as documented in the parent README.
@@ -72,8 +73,10 @@ boundaries and widths use 720-pixel slices; vertical boundaries and heights use
 rectangular update may cover either half of the panel, or its full width. It
 cannot select an arbitrary 100-pixel-wide physical rectangle.
 
-Constraints are mapped before the partial-update planner runs. Connector ROI is
-then projected exactly from mixer coordinates. No DSI-stage rounding or widening
+The planner receives physical panel constraints (720 × 32), including in FHD+.
+The vendor planner itself maps mixer → panel, aligns, and maps back; supplying
+540 × 24 as panel constraints would incorrectly apply scaling twice. Connector ROI
+is then projected exactly from mixer coordinates. No DSI-stage rounding or widening
 is allowed: the scaler/DSC stream must already cover that exact rectangle. The
 kernel checks source geometry, active scaler indices, input dimensions and
 physical output dimensions before accepting a scaled partial update.
@@ -98,7 +101,12 @@ small type fixtures with undefined-behavior checks. It covers 16,950,788 axis
 projections, both policies, bounds, stale scaler output, incorrect alignment,
 right-only updates, duplicate indices and missing scaler flags. The production
 retry block is also tested for forced validation, fatal prepare errors and its
-single-attempt limit. Resource XML and
+single-attempt limit. Added tests cover runtime ON/OFF and HWC skip gating,
+planner cleanup, DS submission/disable, stock DSC/DSI stream sizes and DCS retry.
+The optional `vendor_contract_test.py --library /path/to/libsdmextension.so`
+executes the hash-pinned vendor alignment method using Unicorn; it requires
+`unicorn`, `pyelftools` and `c++filt`. It is not a full vendor-stack emulation.
+Resource XML and
 patch whitespace have also been checked.
 
 These checks do not compile Android, SELinux or the full kernel, validate the
@@ -108,7 +116,7 @@ partial updates or rectangular updates work on the device.
 
 ## Device acceptance
 
-Start with SELinux enforcing. In each of FHD+ and WQHD+, check all three policies
+Start with SELinux enforcing. In each of FHD+ and WQHD+, check ON and OFF
 at 60, 90 and 120 Hz. Include small UI changes, typing, left/right small controls,
 rotation, full-screen animation, screenshot/recording, AOD, unlock and UDFPS.
 Switch policies during use and verify the setting after reboot. Look for stale
@@ -140,7 +148,6 @@ size by itself does not prove that the destination scaler is active.
 | Result | Interpretation |
 | --- | --- |
 | Policy 0, all successful ROIs 1440 × 3200 | Disable path behaves as intended |
-| Policy 1, width 1440 and some heights below 3200 | Full-width partial updates |
 | Policy 2, some widths 720 with x=0 or x=720 and y/height aligned to 32 | Rectangular DSC-slice updates reached DSI |
 | `PlanRejected:1` | This resource plan was rejected; the compositor is using full frames |
 | `ScalerBlocked:1` | A scaler/detail-enhancement constraint prevents PU |

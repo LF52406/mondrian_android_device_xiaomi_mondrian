@@ -37,6 +37,8 @@ apply_commit     kernel/xiaomi/sm8450-modules     https://github.com/LF52406/and
 
 apply_commit     kernel/xiaomi/sm8450-modules     https://github.com/LF52406/android_kernel_xiaomi_sm8450-modules.git     codex/mondrian-partial-update-controls     3dbfe7a002830a17baafa0bd12334f7a91e680c6
 
+apply_commit     kernel/xiaomi/sm8450-modules     https://github.com/LF52406/android_kernel_xiaomi_sm8450-modules.git     codex/mondrian-partial-update-controls     73dc7c9abe4ba4076e4c00235182fa455befae3e
+
 apply_commit     device/xiaomi/sm8450-common     https://github.com/LF52406/mondrian_android_device_xiaomi_sm8450-common.git     codex/mondrian-content-aware-refresh     c88f441afbd6d1c50ebe6848147aece808de7788
 
 # MondrianDisplaySettings calls the public SettingsLib density getter supplied
@@ -51,3 +53,7 @@ bash "$rom_root/device/xiaomi/mondrian/display-settings/apply-partial-update-dis
 python3 "$rom_root/device/xiaomi/mondrian/display-settings/tests/partial-update/run.py" \
     --display "$rom_root/hardware/qcom-caf/sm8450/display" \
     --modules "$rom_root/kernel/xiaomi/sm8450-modules"
+
+python3 "$rom_root/device/xiaomi/mondrian/display-settings/tests/partial-update/packet_test.py" \
+    --modules "$rom_root/kernel/xiaomi/sm8450-modules"
+python3 "$rom_root/kernel/xiaomi/sm8450-modules/qcom/opensource/display-drivers/tests/mondrian_roi_retry_test.py"

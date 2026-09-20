@@ -48,6 +48,7 @@ fixtures = r'''
 #include <map>
 #include <vector>
 #include <algorithm>
+#include <bitset>
 #define UINT32(x) static_cast<uint32_t>(x)
 namespace sdm {
 struct HWPanelInfo {
@@ -57,14 +58,18 @@ struct HWPanelInfo {
  char panel_name[256]="xiaomi 42 02 0a cmd mode dsc dsi panel";
 };
 constexpr int kModeCommand=1;
-struct HWMixerAttributes { uint32_t width=1080, height=2400; };
-struct HWDisplayAttributes { uint32_t x_pixels=1440, y_pixels=3200; };
-struct LayerRect { float left, top, right, bottom; };
+struct HWMixerAttributes { uint32_t width=1080, height=2400, split_left=540, dest_scaler_blocks_used=2; };
+struct HWDisplayAttributes { uint32_t x_pixels=1440, y_pixels=3200; bool is_device_split=true; };
+struct LayerRect { float left, top, right, bottom;
+ LayerRect(float l=0,float t=0,float r=0,float b=0):left(l),top(t),right(r),bottom(b){} };
 struct DRMRect { uint32_t left=0, top=0, right=0, bottom=0; };
 struct ScaleData { struct { bool scale=true, detail_enhance=false; } enable;
  uint32_t dst_width=1440, dst_height=288; };
-struct HWDestScaleInfo { ScaleData scale_data; LayerRect panel_roi={0,96,1440,384}; };
-struct HWLayersInfo { std::vector<LayerRect> left_frame_roi;
+struct HWDestScaleInfo { ScaleData scale_data; LayerRect panel_roi={0,96,1440,384};
+ uint32_t mixer_width=540,mixer_height=2400; bool scale_update=false; };
+constexpr int kUpdateResources=0;
+struct HWLayersInfo { std::vector<LayerRect> left_frame_roi, right_frame_roi;
+ std::bitset<8> updates_mask;
  std::map<uint32_t,HWDestScaleInfo*> dest_scale_info_map; };
 struct Debug { static int value;
  static int GetProperty(const char*, int* v) { *v=value; return 0; } };
@@ -107,18 +112,19 @@ int main() {
  HWPanelInfo panel, mapped;
  HWMixerAttributes mixer;
  HWDisplayAttributes display;
- assert(!MapConstraints(panel,mixer,display,1,&mapped) && !mapped.partial_update);
- assert(MapConstraints(panel,mixer,display,2,&mapped));
- assert(mapped.left_align==540 && mapped.width_align==540 &&
-        mapped.top_align==24 && mapped.height_align==24);
- HWMixerAttributes native_mixer{1440,3200};
- assert(!MapConstraints(panel,native_mixer,display,1,&mapped) && !mapped.partial_update);
- assert(MapConstraints(panel,native_mixer,display,2,&mapped));
+ assert(PlannerPanelInfo(panel,mixer,display,&mapped));
  assert(mapped.left_align==720 && mapped.width_align==720 &&
         mapped.top_align==32 && mapped.height_align==32);
- assert(!MapConstraints(panel,mixer,display,0,&mapped) && !mapped.partial_update);
+ HWMixerAttributes native_mixer{1440,3200};
+ assert(PlannerPanelInfo(panel,native_mixer,display,&mapped));
+ assert(mapped.left_align==720 && mapped.width_align==720 &&
+        mapped.top_align==32 && mapped.height_align==32);
+ Debug::value=0;
+ assert(PlannerPanelInfo(panel,mixer,display,&mapped) && mapped.partial_update);
+ HWDisplayAttributes invalid_display{1080,2400};
+ assert(!PlannerPanelInfo(panel,mixer,invalid_display,&mapped) && !mapped.partial_update);
  HWPanelInfo other=panel; std::strcpy(other.panel_name,"other panel");
- assert(!MapConstraints(other,mixer,display,2,&mapped) && mapped.partial_update);
+ assert(!PlannerPanelInfo(other,mixer,display,&mapped) && mapped.partial_update);
  Debug::value=1; assert(Mode(panel)==2);
  Debug::value=99; assert(Mode(panel)==2); assert(Mode(other)==-1);
  Debug::value=0; assert(Mode(panel)==0);
@@ -150,6 +156,24 @@ int main() {
  layers.dest_scale_info_map[0]=nullptr;
  assert(!ValidateM11aROI(layers,mixer,display,panel));
  assert(ValidateM11aROI(layers,mixer,display,other));
+ layers.dest_scale_info_map[0]=&left;
+ layers.left_frame_roi[0]={0,0,1080,2400};
+ assert(!ValidateM11aROI(layers,mixer,display,panel));
+ left.scale_data.dst_height=right.scale_data.dst_height=3200;
+ left.panel_roi=right.panel_roi={}; // Full resource plans can omit panel_roi.
+ assert(ValidateM11aROI(layers,mixer,display,panel));
+ left.scale_data.enable.detail_enhance=true; // DE remains valid for full frames.
+ assert(ValidateM11aROI(layers,mixer,display,panel));
+ layers.dest_scale_info_map.erase(0);
+ assert(!ValidateM11aROI(layers,mixer,display,panel));
+ layers.dest_scale_info_map.clear();
+ assert(!ValidateM11aROI(layers,mixer,display,panel));
+ layers.left_frame_roi[0]={0,0,1440,3200};
+ assert(ValidateM11aROI(layers,native_mixer,display,panel));
+ panel.partial_update=false; panel.width_align=panel.height_align=0;
+ assert(ValidateM11aROI(layers,native_mixer,display,panel));
+ layers.left_frame_roi[0]={0,0,720,32};
+ assert(!ValidateM11aROI(layers,native_mixer,display,panel));
  std::printf("HWC: %llu projection cases and scaler-plan regressions passed\n",
              (unsigned long long)cases);
 }
@@ -275,6 +299,155 @@ int main() {
  std::puts("Retry: forced revalidation, fatal prepare and single-attempt regressions passed");
 }
 '''
+strategy_source = (core / 'strategy.cpp').read_text()
+strategy_methods = function(strategy_source, 'Strategy::GenerateROI') + '\n' + function(
+    strategy_source[strategy_source.index('void Strategy::GenerateROI()'):], 'Strategy::GenerateROI')
+lifecycle_fixture = r'''
+#define FLOAT(x) static_cast<float>(x)
+namespace sdm {
+constexpr int kErrorNone=0;
+struct PUConstraints { bool enable=true; };
+struct DispLayerStack { HWLayersInfo info; };
+struct Planner {
+ int calls=0, start_error=0, generate_error=0;
+ bool enabled=true;
+ HWDestScaleInfo scale;
+ int Start(const PUConstraints &c) { enabled=c.enable; return start_error; }
+ int GenerateROI(DispLayerStack *s) {
+  ++calls;
+  s->info.left_frame_roi={{540,72,1080,288}};
+  s->info.dest_scale_info_map[1]=&scale;
+  return generate_error;
+ }
+};
+struct Strategy {
+ DispLayerStack *disp_layer_stack_=nullptr;
+ HWPanelInfo hw_panel_info_;
+ HWMixerAttributes mixer_attributes_;
+ HWDisplayAttributes display_attributes_;
+ struct { bool is_src_split=true; } hw_resource_info_;
+ Planner *partial_update_intf_=nullptr;
+ bool pu_frame_enabled_=true, pu_start_success_=false;
+ void GenerateROI(DispLayerStack*,const PUConstraints&);
+ void GenerateROI();
+};
+struct ClientLock { explicit ClientLock(int) {} };
+struct DisplayBase {
+ int disp_mutex_=0, mondrian_pu_mode_=2;
+ bool validated_=true, needs_validate_=false;
+ HWPanelInfo hw_panel_info_;
+ bool IsValidated();
+};
+'''
+lifecycle_test = r'''
+} // namespace sdm
+int main() {
+ using namespace sdm;
+ Planner planner; Strategy strategy; DispLayerStack stack;
+ strategy.partial_update_intf_=&planner;
+ auto full=[&] { assert(stack.info.left_frame_roi.size()==1);
+   auto r=stack.info.left_frame_roi[0];
+   assert(r.left==0 && r.top==0 && r.right==1080 && r.bottom==2400);
+   assert(stack.info.dest_scale_info_map.empty()); };
+ for (int i=0; i<100; ++i) {
+  Debug::value=2; strategy.GenerateROI(&stack,{});
+  assert(planner.enabled && stack.info.dest_scale_info_map.at(1)==&planner.scale);
+  int before=planner.calls;
+  Debug::value=0; strategy.GenerateROI(&stack,{});
+  assert(!planner.enabled && planner.calls==before+1); full();
+ }
+ Debug::value=2; strategy.GenerateROI(&stack,{false}); full();
+ planner.generate_error=-1; strategy.GenerateROI(&stack,{}); full();
+ int before=planner.calls;
+ planner.start_error=-1; strategy.GenerateROI(&stack,{}); full();
+ assert(planner.calls==before);
+ strategy.partial_update_intf_=nullptr; strategy.GenerateROI(&stack,{}); full();
+ DisplayBase display;
+ assert(display.IsValidated());
+ Debug::value=0; assert(!display.IsValidated());
+ assert(display.mondrian_pu_mode_==2); // Observation does not consume transition.
+ display.mondrian_pu_mode_=0; assert(display.IsValidated());
+ Debug::value=2; assert(!display.IsValidated());
+ std::strcpy(display.hw_panel_info_.panel_name,"another panel");
+ assert(display.IsValidated());
+ std::puts("Lifecycle: 100 ON/OFF cycles, disabled Start, failed planning, stale DS cleanup, HWC skip gate passed");
+}
+'''
+
+scaler_fixture = r'''
+namespace sdm {
+using DisplayError=int;
+constexpr int kErrorNone=0, kErrorNotSupported=-1;
+constexpr int SDE_DRM_DESTSCALER_ENABLE=1, SDE_DRM_DESTSCALER_SCALE_UPDATE=2,
+ SDE_DRM_DESTSCALER_ENHANCER_UPDATE=4, SDE_DRM_DESTSCALER_PU_ENABLE=8;
+struct SDEScaler { struct { bool enable=false;
+ struct { bool enable=false; } de; uint32_t dst_width=0,dst_height=0; } scaler_v2; };
+struct sde_drm_dest_scaler_cfg { uint32_t index=0,flags=0,lm_width=0,lm_height=0;
+ uint64_t scaler_cfg=0; };
+struct DSData { uint32_t num_dest_scaler=0; sde_drm_dest_scaler_cfg ds_cfg[2]; };
+struct HWScale {
+ void SetScaler(const ScaleData &in, SDEScaler *out) {
+  out->scaler_v2.enable=in.enable.scale;
+  out->scaler_v2.de.enable=in.enable.detail_enhance;
+  out->scaler_v2.dst_width=in.dst_width; out->scaler_v2.dst_height=in.dst_height;
+ }
+};
+enum class DRMOps { CRTC_SET_DEST_SCALER_CONFIG };
+struct Atomic {
+ int calls=0; DSData data;
+ void Perform(DRMOps,int,uint64_t p) { ++calls; data=*reinterpret_cast<DSData*>(p); }
+};
+struct HWPeripheralDRM {
+ HWScale scaler; HWScale *hw_scale_=&scaler;
+ HWPanelInfo hw_panel_info_;
+ uint32_t dest_scaler_blocks_used_=2;
+ std::vector<SDEScaler> scalar_data_{2};
+ DSData sde_dest_scalar_data_;
+ struct Cache { SDEScaler scalar_data; uint32_t flags=0; };
+ std::vector<Cache> dest_scalar_cache_{2};
+ Atomic atomic; Atomic *drm_atomic_intf_=&atomic;
+ struct { int crtc_id=1; } token_;
+ bool needs_ds_update_=false;
+ DisplayError SetDestScalarData(const HWLayersInfo&);
+};
+'''
+scaler_test = r'''
+}
+int main() {
+ using namespace sdm;
+ HWPeripheralDRM hw; HWLayersInfo layers; HWDestScaleInfo left,right;
+ layers.updates_mask.set(kUpdateResources);
+ layers.dest_scale_info_map[1]=&right;
+ assert(hw.SetDestScalarData(layers)==kErrorNone);
+ assert(hw.atomic.data.num_dest_scaler==1 && hw.atomic.data.ds_cfg[0].index==1);
+ assert(hw.atomic.data.ds_cfg[0].flags & SDE_DRM_DESTSCALER_SCALE_UPDATE);
+ left.scale_data.enable.scale=false; layers.dest_scale_info_map[0]=&left;
+ assert(hw.SetDestScalarData(layers)==kErrorNone);
+ assert(hw.atomic.data.num_dest_scaler==1 && hw.atomic.data.ds_cfg[0].index==1);
+ left.scale_data.enable.scale=true;
+ assert(hw.SetDestScalarData(layers)==kErrorNone);
+ assert(hw.atomic.data.num_dest_scaler==2 && hw.atomic.data.ds_cfg[0].index==0);
+ right.mixer_height=3200;
+ assert(hw.SetDestScalarData(layers)==kErrorNone);
+ assert(hw.atomic.data.ds_cfg[1].lm_height==3200);
+ int before=hw.atomic.calls;
+ layers.updates_mask.reset();
+ assert(hw.SetDestScalarData(layers)==kErrorNone && hw.atomic.calls==before);
+ layers.updates_mask.set(); layers.dest_scale_info_map[1]=nullptr;
+ assert(hw.SetDestScalarData(layers)==kErrorNotSupported && hw.atomic.calls==before);
+ layers.dest_scale_info_map.erase(1); layers.dest_scale_info_map[2]=&right;
+ assert(hw.SetDestScalarData(layers)==kErrorNotSupported && hw.atomic.calls==before);
+ layers.dest_scale_info_map.clear();
+ assert(hw.SetDestScalarData(layers)==kErrorNone && hw.atomic.calls==before+1);
+ assert(hw.atomic.data.num_dest_scaler==2);
+ for (auto &cfg:hw.atomic.data.ds_cfg) {
+  assert(cfg.flags==SDE_DRM_DESTSCALER_SCALE_UPDATE);
+  assert(!hw.scalar_data_[cfg.index].scaler_v2.enable);
+ }
+ std::puts("DS submission: sparse right index, disabled entry, LM change, buffer-only, invalid plan and native disable passed");
+}
+'''
+
 with tempfile.TemporaryDirectory(prefix='mondrian-pu-tests-') as name:
     tmp=Path(name)
     (tmp/'private').mkdir(); (tmp/'utils').mkdir()
@@ -284,6 +457,10 @@ with tempfile.TemporaryDirectory(prefix='mondrian-pu-tests-') as name:
       'hwc':fixtures+'\n#include "mondrian_pu.h"\nnamespace sdm {\n'+hwc_helpers+'\n}\n'+hwc_test,
       'kernel':kernel_fixture+f'\n#define SDE_DS_OVERFETCH_SIZE {overfetch}\n'+kernel_helpers+kernel_test,
       'retry':fixtures+'\n#include "mondrian_pu.h"\n'+retry_fixture+retry_block+retry_test,
+      'lifecycle': fixtures+'\n#include "mondrian_pu.h"\n'+lifecycle_fixture+strategy_methods+
+                   function(prepare_source, 'DisplayBase::IsValidated')+lifecycle_test,
+      'scaler': fixtures+'\n#include "mondrian_pu.h"\n'+scaler_fixture+function(
+          (core/'drm/hw_peripheral_drm.cpp').read_text(), 'HWPeripheralDRM::SetDestScalarData')+scaler_test,
     }
     for key,source in sources.items():
         src=tmp/(key+'.cpp'); binary=tmp/key; src.write_text(source)

@@ -7,6 +7,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 rom_root="${1:-${ANDROID_BUILD_TOP:-$PWD}}"
 display_dir="$rom_root/hardware/qcom-caf/sm8450/display"
 patch_file="$script_dir/patches/0003-M11A-partial-update-HWC-SDM.patch"
+upgrade_file="$script_dir/patches/upgrades/7eb3839-HWC-SDM.patch"
 panel_dtsi="$rom_root/kernel/xiaomi/sm8450-devicetrees/qcom/display/display/dsi-panel-m11a-42-02-0a-dsc-cmd.dtsi"
 dsi_display="$rom_root/kernel/xiaomi/sm8450-modules/qcom/opensource/display-drivers/msm/dsi/dsi_display.c"
 sde_crtc="$rom_root/kernel/xiaomi/sm8450-modules/qcom/opensource/display-drivers/msm/sde/sde_crtc.c"
@@ -14,8 +15,11 @@ sde_crtc="$rom_root/kernel/xiaomi/sm8450-modules/qcom/opensource/display-drivers
 required=(
     "sdm/libs/core/display_base.cpp"
     "sdm/libs/core/display_base.h"
+    "sdm/libs/core/display_builtin.cpp"
     "sdm/libs/core/drm/hw_device_drm.cpp"
+    "sdm/libs/core/drm/hw_device_drm.h"
     "sdm/libs/core/drm/hw_peripheral_drm.cpp"
+    "sdm/libs/core/drm/hw_peripheral_drm.h"
     "sdm/libs/core/strategy.cpp"
     "sdm/libs/core/strategy.h"
 )
@@ -34,9 +38,10 @@ fi
 
 if [[ ! -f "$dsi_display" ]] ||
    ! grep -q 'm11a_partial_update_profile' "$dsi_display" ||
+   ! grep -q 'dsi_ctrl_invalidate_roi' "$dsi_display" ||
    [[ ! -f "$sde_crtc" ]] ||
    ! grep -q '_sde_crtc_validate_m11a_scaled_roi' "$sde_crtc"; then
-    echo "Missing M11A scaled Partial Update kernel support (5c2241f + 3dbfe7a)." >&2
+    echo "Missing M11A kernel support (5c2241f + 3dbfe7a + 73dc7c9)." >&2
     exit 1
 fi
 
@@ -60,6 +65,16 @@ fi
 
 if git -C "$display_dir" apply --reverse --check "$patch_file" 2>/dev/null; then
     echo "Mondrian M11A Partial Update HWC/SDM patch is already applied."
+    exit 0
+fi
+
+# The previously shipped patch may be committed or still be a working-tree
+# diff. Apply the incremental correction in place; never reset user changes.
+if [[ -f "$display_dir/sdm/libs/core/mondrian_pu.h" ]] &&
+   grep -q 'inline bool MapConstraints' "$display_dir/sdm/libs/core/mondrian_pu.h" &&
+   git -C "$display_dir" apply --check "$upgrade_file" 2>/dev/null; then
+    git -C "$display_dir" apply "$upgrade_file"
+    echo "Updated the existing 7eb3839 M11A HWC/SDM implementation."
     exit 0
 fi
 

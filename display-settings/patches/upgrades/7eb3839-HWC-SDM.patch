@@ -1,0 +1,474 @@
+diff --git a/sdm/libs/core/display_base.cpp b/sdm/libs/core/display_base.cpp
+index b1fa53e..515ffb7 100644
+--- a/sdm/libs/core/display_base.cpp
++++ b/sdm/libs/core/display_base.cpp
+@@ -755,6 +755,14 @@ DisplayError DisplayBase::ValidateGPUTargetParams() {
+   return kErrorNone;
+ }
+ 
++bool DisplayBase::IsValidated() {
++  ClientLock lock(disp_mutex_);
++  // HWC's all-client fast path asks this before calling SDM PrePrepare.
++  // Observe policy here without consuming the transition or pending PU frame.
++  const int mode = mondrian_pu::Mode(hw_panel_info_);
++  return validated_ && !needs_validate_ && (mode < 0 || mode == mondrian_pu_mode_);
++}
++
+ bool DisplayBase::IsValidateNeeded() {
+   const int mode = mondrian_pu::Mode(hw_panel_info_);
+   if (mode >= 0 && mode != mondrian_pu_mode_) {
+@@ -3478,9 +3486,9 @@ void DisplayBase::SetPUonDestScaler() {
+                       mixer_attributes_.height != display_attributes_.y_pixels;
+   HWPanelInfo mapped;
+   const bool supported = mondrian_pu::IsPanel(hw_panel_info_) &&
+-      hw_resource_info_.hw_dest_scalar_info.count &&
+-      mondrian_pu::MapConstraints(hw_panel_info_, mixer_attributes_, display_attributes_,
+-                                  mondrian_pu::Mode(hw_panel_info_), &mapped);
++      mixer_attributes_.dest_scaler_blocks_used > 0 &&
++      mixer_attributes_.dest_scaler_blocks_used <= 2 &&
++      mondrian_pu::PlannerPanelInfo(hw_panel_info_, mixer_attributes_, display_attributes_, &mapped);
+   disable_pu_on_dest_scaler_ = de_enabled_ || (scaled && !supported);
+ }
+ 
+diff --git a/sdm/libs/core/display_base.h b/sdm/libs/core/display_base.h
+index 69210f2..4f53fde 100644
+--- a/sdm/libs/core/display_base.h
++++ b/sdm/libs/core/display_base.h
+@@ -246,10 +246,7 @@ class DisplayBase : public DisplayInterface {
+   }
+   virtual bool HasDemura() { return false; }
+   virtual DisplayError GetOutputBufferAcquireFence(shared_ptr<Fence> *out_fence);
+-  virtual bool IsValidated() {
+-    ClientLock lock(disp_mutex_);
+-    return validated_ && !needs_validate_;
+-  }
++  virtual bool IsValidated();
+   DisplayError DestroyLayer() {
+     ClientLock lock(disp_mutex_);
+     return kErrorNone;
+diff --git a/sdm/libs/core/display_builtin.cpp b/sdm/libs/core/display_builtin.cpp
+index 8fc6efc..20a6227 100644
+--- a/sdm/libs/core/display_builtin.cpp
++++ b/sdm/libs/core/display_builtin.cpp
+@@ -74,6 +74,7 @@
+ #include <vector>
+ 
+ #include "display_builtin.h"
++#include "mondrian_pu.h"
+ #include "drm_interface.h"
+ #include "drm_master.h"
+ #include "hw_info_interface.h"
+@@ -1512,6 +1513,11 @@ std::string DisplayBuiltIn::Dump() {
+   os << "\n Left Split:" << hw_panel_info_.split_info.left_split
+      << " Right Split:" << hw_panel_info_.split_info.right_split;
+   os << "\n PartialUpdate:" << hw_panel_info_.partial_update;
++  if (mondrian_pu::IsPanel(hw_panel_info_)) {
++    os << " MondrianPolicy:" << mondrian_pu_mode_
++       << " ScalerBlocked:" << disable_pu_on_dest_scaler_
++       << " PlanRejected:" << mondrian_pu_failed_;
++  }
+   if (hw_panel_info_.partial_update) {
+     os << "\n ROI Min w:" << hw_panel_info_.min_roi_width;
+     os << " Min h:" << hw_panel_info_.min_roi_height;
+@@ -1888,6 +1894,16 @@ DisplayError DisplayBuiltIn::SetBLScale(uint32_t level) {
+ }
+ 
+ bool DisplayBuiltIn::CanCompareFrameROI(LayerStack *layer_stack) {
++  // This fast path clears dest_scale_info_map and only regenerates ROI. With
++  // destination scaling, equal rectangles do not establish a valid scaler plan.
++  // Keep resource preparation and the full-frame retry in DisplayBase::Prepare.
++  if (mondrian_pu::IsPanel(hw_panel_info_) &&
++      (mixer_attributes_.width != display_attributes_.x_pixels ||
++       mixer_attributes_.height != display_attributes_.y_pixels ||
++       mondrian_pu_mode_ == 0 || mondrian_pu_failed_ || cwb_config_)) {
++    return false;
++  }
++
+   // Check Display validation and safe-mode states.
+   if (needs_validate_ || comp_manager_->IsSafeMode() || layer_stack->needs_validate) {
+     return false;
+@@ -2168,6 +2184,7 @@ DisplayError DisplayBuiltIn::ReconfigureDisplay() {
+   display_attributes_ = display_attributes;
+   mixer_attributes_ = mixer_attributes;
+   hw_panel_info_ = hw_panel_info;
++  mondrian_pu_failed_ = false;
+ 
+   // TODO(user): Temporary changes, to be removed when DRM driver supports
+   // Partial update with Destination scaler enabled.
+diff --git a/sdm/libs/core/drm/hw_device_drm.cpp b/sdm/libs/core/drm/hw_device_drm.cpp
+index 0d5b0e1..884eee7 100644
+--- a/sdm/libs/core/drm/hw_device_drm.cpp
++++ b/sdm/libs/core/drm/hw_device_drm.cpp
+@@ -185,15 +185,16 @@ bool ValidateM11aROI(const HWLayersInfo &layers, const HWMixerAttributes &mixer,
+   if (!mondrian_pu::IsPanel(panel)) {
+     return true;
+   }
+-  if (layers.left_frame_roi.size() != 1) {
++  if (layers.left_frame_roi.size() != 1 || !mixer.width || !mixer.height ||
++      !display.x_pixels || !display.y_pixels) {
+     return false;
+   }
+   const auto &roi = layers.left_frame_roi[0];
+-  if (roi.left == 0 && roi.top == 0 && roi.right == mixer.width && roi.bottom == mixer.height) {
+-    return true;
+-  }
+-  DRMRect connector = {};
+-  if (!GetConnectorROI(roi, mixer, display, panel, &connector)) {
++  const bool full_frame = roi.left == 0 && roi.top == 0 &&
++                          roi.right == mixer.width && roi.bottom == mixer.height;
++  DRMRect connector = {0, 0, display.x_pixels, display.y_pixels};
++  if (!full_frame && (!panel.partial_update ||
++                      !GetConnectorROI(roi, mixer, display, panel, &connector))) {
+     return false;
+   }
+   if (mixer.width == display.x_pixels && mixer.height == display.y_pixels) {
+@@ -201,19 +202,33 @@ bool ValidateM11aROI(const HWLayersInfo &layers, const HWMixerAttributes &mixer,
+   }
+   // libsdmextension owns scaler phase/overfetch calculations. A property or a
+   // rescaled rectangle cannot substitute for a matching resource-manager plan.
+-  if (layers.dest_scale_info_map.empty() || layers.dest_scale_info_map.size() > 2) {
++  if (!mixer.dest_scaler_blocks_used || mixer.dest_scaler_blocks_used > 2 ||
++      layers.dest_scale_info_map.empty() || layers.dest_scale_info_map.size() > 2) {
+     return false;
+   }
+   uint32_t covered_width = 0;
+   uint32_t next_left = connector.left;
+   for (const auto &entry : layers.dest_scale_info_map) {
+     const HWDestScaleInfo *scale = entry.second;
+-    if (!scale || scale->scale_data.enable.detail_enhance) {
++    if (!scale || entry.first >= mixer.dest_scaler_blocks_used ||
++        (!full_frame && scale->scale_data.enable.detail_enhance)) {
+       return false;
+     }
+     if (!scale->scale_data.enable.scale) {
+       continue;
+     }
++    if (full_frame) {
++      // Full-frame resource plans need not populate panel_roi. Still reject a
++      // retained half-height/half-panel scaler when ResetROI removes DRM ROIs.
++      if (entry.first * (display.x_pixels / mixer.dest_scaler_blocks_used) != next_left ||
++          scale->scale_data.dst_width != display.x_pixels / mixer.dest_scaler_blocks_used ||
++          scale->scale_data.dst_height != display.y_pixels) {
++        return false;
++      }
++      covered_width += scale->scale_data.dst_width;
++      next_left += scale->scale_data.dst_width;
++      continue;
++    }
+     const auto &out = scale->panel_roi;
+     if (out.left != next_left || out.top != connector.top || out.bottom != connector.bottom ||
+         out.right <= out.left || out.right > connector.right ||
+@@ -1832,11 +1847,15 @@ void HWDeviceDRM::ClearSolidfillStages() {
+   SetSolidfillStages();
+ }
+ 
++bool HWDeviceDRM::ValidateROI(const HWLayersInfo &layers) const {
++  return ValidateM11aROI(layers, mixer_attributes_,
++                         display_attributes_[current_mode_index_], hw_panel_info_);
++}
++
+ DisplayError HWDeviceDRM::Validate(HWLayersInfo *hw_layers_info) {
+   DTRACE_SCOPED();
+ 
+-  if (!ValidateM11aROI(*hw_layers_info, mixer_attributes_,
+-                       display_attributes_[current_mode_index_], hw_panel_info_)) {
++  if (!ValidateROI(*hw_layers_info)) {
+     DLOGW("M11A: ROI does not match the destination scaler plan");
+     DumpHWLayers(hw_layers_info);
+     return kErrorNotSupported;
+@@ -1865,8 +1884,7 @@ DisplayError HWDeviceDRM::Validate(HWLayersInfo *hw_layers_info) {
+ DisplayError HWDeviceDRM::Commit(HWLayersInfo *hw_layers_info) {
+   DTRACE_SCOPED();
+ 
+-  if (!ValidateM11aROI(*hw_layers_info, mixer_attributes_,
+-                       display_attributes_[current_mode_index_], hw_panel_info_)) {
++  if (!ValidateROI(*hw_layers_info)) {
+     DLOGW("M11A: ROI does not match the destination scaler plan");
+     return kErrorNotSupported;
+   }
+diff --git a/sdm/libs/core/drm/hw_device_drm.h b/sdm/libs/core/drm/hw_device_drm.h
+index 5fc3dd6..232c73e 100644
+--- a/sdm/libs/core/drm/hw_device_drm.h
++++ b/sdm/libs/core/drm/hw_device_drm.h
+@@ -132,6 +132,7 @@ class HWDeviceDRM : public HWInterface {
+   virtual DisplayError DozeSuspend(const HWQosData &qos_data, SyncPoints *sync_points);
+   virtual DisplayError Standby(SyncPoints *sync_points);
+   virtual DisplayError Validate(HWLayersInfo *hw_layers_info);
++  bool ValidateROI(const HWLayersInfo &layers) const;
+   virtual DisplayError Commit(HWLayersInfo *hw_layers_info);
+   virtual DisplayError Flush(HWLayersInfo *hw_layers_info);
+   DisplayError SetupConcurrentWritebackModes();
+diff --git a/sdm/libs/core/drm/hw_peripheral_drm.cpp b/sdm/libs/core/drm/hw_peripheral_drm.cpp
+index a4054f7..bdd1926 100644
+--- a/sdm/libs/core/drm/hw_peripheral_drm.cpp
++++ b/sdm/libs/core/drm/hw_peripheral_drm.cpp
+@@ -240,7 +240,13 @@ DisplayError HWPeripheralDRM::SetDisplayMode(const HWDisplayMode hw_display_mode
+ }
+ 
+ DisplayError HWPeripheralDRM::Validate(HWLayersInfo *hw_layers_info) {
+-  SetDestScalarData(*hw_layers_info);
++  if (!ValidateROI(*hw_layers_info)) {
++    return kErrorNotSupported;
++  }
++  DisplayError error = SetDestScalarData(*hw_layers_info);
++  if (error != kErrorNone) {
++    return error;
++  }
+   SetIdlePCState();
+   SetSelfRefreshState();
+   SetVMReqState();
+@@ -249,7 +255,13 @@ DisplayError HWPeripheralDRM::Validate(HWLayersInfo *hw_layers_info) {
+ }
+ 
+ DisplayError HWPeripheralDRM::Commit(HWLayersInfo *hw_layers_info) {
+-  SetDestScalarData(*hw_layers_info);
++  if (!ValidateROI(*hw_layers_info)) {
++    return kErrorNotSupported;
++  }
++  DisplayError error = SetDestScalarData(*hw_layers_info);
++  if (error != kErrorNone) {
++    return error;
++  }
+ 
+   int64_t cwb_fence_fd = -1;
+   bool has_fence = SetupConcurrentWriteback(*hw_layers_info, false, &cwb_fence_fd);
+@@ -258,7 +270,7 @@ DisplayError HWPeripheralDRM::Commit(HWLayersInfo *hw_layers_info) {
+   SetSelfRefreshState();
+   SetVMReqState();
+ 
+-  DisplayError error = HWDeviceDRM::Commit(hw_layers_info);
++  error = HWDeviceDRM::Commit(hw_layers_info);
+   shared_ptr<Fence> cwb_fence = Fence::Create(INT(cwb_fence_fd), "cwb_fence");
+   if (error != kErrorNone) {
+     return error;
+@@ -302,22 +314,27 @@ void HWPeripheralDRM::ResetDestScalarCache() {
+   }
+ }
+ 
+-void HWPeripheralDRM::SetDestScalarData(const HWLayersInfo &hw_layer_info) {
++DisplayError HWPeripheralDRM::SetDestScalarData(const HWLayersInfo &hw_layer_info) {
+   if (!hw_scale_ || !dest_scaler_blocks_used_) {
+-    return;
++    return kErrorNone;
+   }
+ 
+-  if (mondrian_pu::IsPanel(hw_panel_info_) &&
+-      !hw_layer_info.dest_scale_info_map.empty()) {
++  if (mondrian_pu::IsPanel(hw_panel_info_)) {
+     if (!hw_layer_info.updates_mask.test(kUpdateResources)) {
+-      return;
++      return kErrorNone;
+     }
+-    // Keep entries packed but preserve physical scaler indices. In a right-only
+-    // update map[1] must become ds_cfg[0] with index=1, not a stale ds_cfg[0].
++    // Keep entries packed but preserve logical mixer indices. The kernel swaps
++    // LM/DS hardware for right-only DSC merge; map[1] is ds_cfg[0] with index=1.
+     bool any_enabled = false;
++    const size_t capacity = sizeof(sde_dest_scalar_data_.ds_cfg) /
++                            sizeof(sde_dest_scalar_data_.ds_cfg[0]);
++    if (hw_layer_info.dest_scale_info_map.size() > capacity ||
++        dest_scaler_blocks_used_ > capacity) {
++      return kErrorNotSupported;
++    }
+     for (const auto &entry : hw_layer_info.dest_scale_info_map) {
+       if (!entry.second || entry.first >= scalar_data_.size()) {
+-        return;
++        return kErrorNotSupported;
+       }
+       any_enabled |= entry.second->scale_data.enable.scale != 0;
+     }
+@@ -328,10 +345,6 @@ void HWPeripheralDRM::SetDestScalarData(const HWLayersInfo &hw_layer_info) {
+       if (any_enabled && !info->scale_data.enable.scale) {
+         continue;
+       }
+-      if (count >= sizeof(sde_dest_scalar_data_.ds_cfg) /
+-                   sizeof(sde_dest_scalar_data_.ds_cfg[0])) {
+-        return;
+-      }
+       SDEScaler *scale = &scalar_data_[entry.first];
+       hw_scale_->SetScaler(info->scale_data, scale);
+       auto &cfg = sde_dest_scalar_data_.ds_cfg[count++];
+@@ -350,13 +363,25 @@ void HWPeripheralDRM::SetDestScalarData(const HWLayersInfo &hw_layer_info) {
+       cfg.lm_height = info->mixer_height;
+       cfg.scaler_cfg = reinterpret_cast<uint64_t>(&scale->scaler_v2);
+     }
++    if (!count) {
++      // An empty native-resolution resource plan must disable previous FHD DS,
++      // not retain the last partial scaler registers. Scaled plans were checked
++      // by ValidateROI before any atomic property was queued.
++      for (uint32_t i = 0; i < dest_scaler_blocks_used_; i++) {
++        scalar_data_[i] = {};
++        auto &cfg = sde_dest_scalar_data_.ds_cfg[count++];
++        cfg.index = i;
++        cfg.flags = SDE_DRM_DESTSCALER_SCALE_UPDATE;
++        cfg.scaler_cfg = reinterpret_cast<uint64_t>(&scalar_data_[i].scaler_v2);
++      }
++    }
+     sde_dest_scalar_data_.num_dest_scaler = count;
+     drm_atomic_intf_->Perform(DRMOps::CRTC_SET_DEST_SCALER_CONFIG, token_.crtc_id,
+                               reinterpret_cast<uint64_t>(&sde_dest_scalar_data_));
+     // This path submits every resource change, including changes of active
+     // indices and LM dimensions. Buffer-only commits retain the last plan.
+     needs_ds_update_ = false;
+-    return;
++    return kErrorNone;
+   }
+ 
+   for (uint32_t i = 0; i < dest_scaler_blocks_used_; i++) {
+@@ -400,6 +425,7 @@ void HWPeripheralDRM::SetDestScalarData(const HWLayersInfo &hw_layer_info) {
+     drm_atomic_intf_->Perform(DRMOps::CRTC_SET_DEST_SCALER_CONFIG, token_.crtc_id,
+                               reinterpret_cast<uint64_t>(&sde_dest_scalar_data_));
+   }
++  return kErrorNone;
+ }
+ 
+ void HWPeripheralDRM::CacheDestScalarData() {
+diff --git a/sdm/libs/core/drm/hw_peripheral_drm.h b/sdm/libs/core/drm/hw_peripheral_drm.h
+index ba3f482..d72c4a7 100644
+--- a/sdm/libs/core/drm/hw_peripheral_drm.h
++++ b/sdm/libs/core/drm/hw_peripheral_drm.h
+@@ -115,7 +115,7 @@ class HWPeripheralDRM : public HWDeviceDRM, public PanelFeaturePropertyIntf {
+ 
+  private:
+   void InitDestScaler();
+-  void SetDestScalarData(const HWLayersInfo &hw_layer_info);
++  DisplayError SetDestScalarData(const HWLayersInfo &hw_layer_info);
+   void ResetDestScalarCache();
+   void CreatePanelFeaturePropertyMap();
+   void SetIdlePCState() {
+diff --git a/sdm/libs/core/mondrian_pu.h b/sdm/libs/core/mondrian_pu.h
+index 5524b4d..239898e 100644
+--- a/sdm/libs/core/mondrian_pu.h
++++ b/sdm/libs/core/mondrian_pu.h
+@@ -28,27 +28,31 @@ inline int Mode(const HWPanelInfo &panel) {
+   return mode == 0 ? 0 : 2;
+ }
+ 
+-inline bool MapConstraints(const HWPanelInfo &panel, const HWMixerAttributes &mixer,
+-                            const HWDisplayAttributes &display, int mode, HWPanelInfo *out) {
++inline bool PlannerPanelInfo(const HWPanelInfo &panel, const HWMixerAttributes &mixer,
++                            const HWDisplayAttributes &display, HWPanelInfo *out) {
+   *out = panel;
+   if (!IsPanel(panel)) {
+     return false;
+   }
+   if (!panel.partial_update || display.x_pixels != 1440 || display.y_pixels != 3200 ||
+-      !mixer.width || !mixer.height || mode != 2) {
++      !mixer.width || !mixer.height) {
+     out->partial_update = false;
+     return false;
+   }
+-  const HWPanelInfo physical = *out;
++  // libsdmextension::ApplyPanelRestriction maps mixer -> panel, aligns there,
++  // then maps back. ConfigureDestScaleData also consumes physical constraints.
++  // Passing 540x24 for FHD+ here would apply the scale twice. Check that an
++  // exact source grid exists, but keep the advertised physical 720x32 grid.
++  int left_align, width_align, top_align, height_align, min_width, min_height;
+   const bool valid =
+-      SourceAlignment(physical.left_align, mixer.width, display.x_pixels, &out->left_align) &&
+-      SourceAlignment(physical.width_align, mixer.width, display.x_pixels, &out->width_align) &&
+-      SourceMinimum(physical.min_roi_width, mixer.width, display.x_pixels,
+-                    out->width_align, &out->min_roi_width) &&
+-      SourceAlignment(physical.top_align, mixer.height, display.y_pixels, &out->top_align) &&
+-      SourceAlignment(physical.height_align, mixer.height, display.y_pixels, &out->height_align) &&
+-      SourceMinimum(physical.min_roi_height, mixer.height, display.y_pixels,
+-                    out->height_align, &out->min_roi_height);
++      SourceAlignment(panel.left_align, mixer.width, display.x_pixels, &left_align) &&
++      SourceAlignment(panel.width_align, mixer.width, display.x_pixels, &width_align) &&
++      SourceMinimum(panel.min_roi_width, mixer.width, display.x_pixels,
++                    width_align, &min_width) &&
++      SourceAlignment(panel.top_align, mixer.height, display.y_pixels, &top_align) &&
++      SourceAlignment(panel.height_align, mixer.height, display.y_pixels, &height_align) &&
++      SourceMinimum(panel.min_roi_height, mixer.height, display.y_pixels,
++                    height_align, &min_height);
+   out->partial_update = valid;
+   return valid;
+ }
+diff --git a/sdm/libs/core/strategy.cpp b/sdm/libs/core/strategy.cpp
+index 8b21934..5bbef24 100644
+--- a/sdm/libs/core/strategy.cpp
++++ b/sdm/libs/core/strategy.cpp
+@@ -88,34 +88,23 @@ HWPanelInfo Strategy::PartialUpdatePanelInfo(const HWPanelInfo &panel,
+                                             const HWMixerAttributes &mixer,
+                                             const HWDisplayAttributes &display) {
+   HWPanelInfo result = panel;
+-  mondrian_pu_mode_ = mondrian_pu::Mode(panel);
+-  if (mondrian_pu_mode_ >= 0) {
+-    mondrian_pu::MapConstraints(panel, mixer, display, mondrian_pu_mode_, &result);
+-  }
++  mondrian_pu::PlannerPanelInfo(panel, mixer, display, &result);
+   return result;
+ }
+ 
+ void Strategy::GenerateROI(DispLayerStack *disp_layer_stack, const PUConstraints &pu_constraints) {
+   disp_layer_stack_ = disp_layer_stack;
+   const int mode = mondrian_pu::Mode(hw_panel_info_);
+-  if (extension_intf_ && mode >= 0 && mode != mondrian_pu_mode_) {
+-    if (partial_update_intf_) {
+-      extension_intf_->DestroyPartialUpdate(partial_update_intf_);
+-      partial_update_intf_ = nullptr;
+-    }
+-    HWPanelInfo panel = PartialUpdatePanelInfo(hw_panel_info_, mixer_attributes_,
+-                                              display_attributes_);
+-    extension_intf_->CreatePartialUpdate(display_id_, display_type_, hw_resource_info_, panel,
+-                                         mixer_attributes_, display_attributes_, fb_config_,
+-                                         &partial_update_intf_);
+-  }
++  // Runtime policy is a Start constraint, not a capability change. Keep the
++  // planner alive: its HWDestScaleInfo pointers can still belong to a cached plan.
+   pu_frame_enabled_ = mode < 0 || (pu_constraints.enable && mode != 0);
++  pu_start_success_ = false;
+   if (partial_update_intf_) {
+     PUConstraints constraints = pu_constraints;
+     if (mode >= 0) {
+       constraints.enable = pu_frame_enabled_;
+     }
+-    partial_update_intf_->Start(constraints);
++    pu_start_success_ = partial_update_intf_->Start(constraints) == kErrorNone;
+   }
+ 
+   return GenerateROI();
+@@ -199,8 +188,10 @@ DisplayError Strategy::GetNextStrategy() {
+ void Strategy::GenerateROI() {
+   bool split_display = false;
+ 
+-  if (pu_frame_enabled_ && partial_update_intf_ &&
+-      partial_update_intf_->GenerateROI(disp_layer_stack_) == kErrorNone) {
++  // Even Start(enable=false) must reach the extension: its ResetROI clears
++  // planner-owned scaler entries and prepares non-PU CWB state.
++  if (pu_start_success_ && partial_update_intf_ &&
++      partial_update_intf_->GenerateROI(disp_layer_stack_) == kErrorNone && pu_frame_enabled_) {
+     return;
+   }
+ 
+@@ -213,6 +204,11 @@ void Strategy::GenerateROI() {
+ 
+   disp_layer_stack_->info.left_frame_roi = {};
+   disp_layer_stack_->info.right_frame_roi = {};
++  if (mondrian_pu::IsPanel(hw_panel_info_)) {
++    // Never attach a rejected partial scaler plan to the full-frame retry.
++    // Resource preparation will supply the full-frame destination scalers.
++    disp_layer_stack_->info.dest_scale_info_map.clear();
++  }
+ 
+   if (split_display) {
+     float left_split = FLOAT(mixer_attributes_.split_left);
+diff --git a/sdm/libs/core/strategy.h b/sdm/libs/core/strategy.h
+index dc21d8f..a6de27b 100644
+--- a/sdm/libs/core/strategy.h
++++ b/sdm/libs/core/strategy.h
+@@ -64,8 +64,8 @@ class Strategy {
+   HWPanelInfo PartialUpdatePanelInfo(const HWPanelInfo &panel,
+                                      const HWMixerAttributes &mixer,
+                                      const HWDisplayAttributes &display);
+-  int mondrian_pu_mode_ = -1;
+   bool pu_frame_enabled_ = true;
++  bool pu_start_success_ = false;
+ 
+   ExtensionInterface *extension_intf_ = NULL;
+   StrategyInterface *strategy_intf_ = NULL;
+@@ -86,4 +86,3 @@ class Strategy {
+ }  // namespace sdm
+ 
+ #endif  // __STRATEGY_H__
+-
