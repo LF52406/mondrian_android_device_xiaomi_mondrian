@@ -25,3 +25,8 @@ TARGET_SCREEN_DENSITY := 560
 
 # Include MIUI Camera BoardConfig
 -include device/xiaomi/miuicamera-cupid/BoardConfig.mk
+
+# Mondrian display settings
+SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS += device/xiaomi/mondrian/sepolicy/public
+SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/xiaomi/mondrian/sepolicy/private
+BOARD_VENDOR_SEPOLICY_DIRS += device/xiaomi/mondrian/sepolicy/vendor

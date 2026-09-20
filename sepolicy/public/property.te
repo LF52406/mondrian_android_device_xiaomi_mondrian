@@ -1,0 +1,2 @@
+# HWC may read this owner-controlled setting; vendor processes cannot write it.
+system_restricted_prop(mondrian_partial_update_prop)

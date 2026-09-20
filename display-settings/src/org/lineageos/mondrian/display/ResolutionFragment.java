@@ -12,6 +12,7 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.preference.Preference;
+import androidx.preference.SwitchPreferenceCompat;
 
 import com.android.settingslib.widget.SelectorWithWidgetPreference;
 import com.android.settingslib.widget.SettingsBasePreferenceFragment;
@@ -24,6 +25,7 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
     private SelectorWithWidgetPreference mFhd;
     private SelectorWithWidgetPreference mWqhd;
     private Preference mFooter;
+    private SwitchPreferenceCompat mPartialUpdate;
     private AlertDialog mDialog;
     private ResolutionEngine.Pending mPending;
     private boolean mBusy;
@@ -38,6 +40,11 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
         mFooter = findPreference("resolution_footer");
         mFhd.setOnClickListener(preference -> preview(1080));
         mWqhd.setOnClickListener(preference -> preview(1440));
+        mPartialUpdate = findPreference("partial_update");
+        mPartialUpdate.setOnPreferenceChangeListener((preference, value) -> {
+            changePartialUpdate((Boolean) value ? 2 : 0);
+            return false;
+        });
         updateEnabled();
     }
 
@@ -63,6 +70,29 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
             mDialog = null;
         }
         super.onStop();
+    }
+
+    private void changePartialUpdate(int mode) {
+        if (mBusy || !mAllowed || mPending != null) return;
+        mBusy = true;
+        updateEnabled();
+        mController.execute(() -> {
+            PartialUpdate.write(mController.backend, mController.engine, mode);
+            return PartialUpdate.read();
+        }, (saved, error) -> {
+            mBusy = false;
+            if (!isAdded()) return;
+            if (error != null) {
+                Toast.makeText(requireContext(), R.string.partial_update_error, Toast.LENGTH_LONG)
+                        .show();
+            }
+            renderPartialUpdate();
+            updateEnabled();
+        });
+    }
+
+    private void renderPartialUpdate() {
+        mPartialUpdate.setChecked(PartialUpdate.read() != 0);
     }
 
     private void preview(int width) {
@@ -121,6 +151,7 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
     private void render(Ui ui) {
         mAllowed = ui.allowed;
         mPending = ui.pending;
+        renderPartialUpdate();
         mFhd.setChecked(ui.frame.width == 1080 && ui.frame.height == 2400);
         mWqhd.setChecked(ui.frame.width == 1440 && ui.frame.height == 3200);
         mFooter.setTitle(mAllowed ? R.string.resolution_footer : R.string.resolution_owner_only);
@@ -179,6 +210,7 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
         boolean enabled = mAllowed && !mBusy && mPending == null;
         mFhd.setEnabled(enabled);
         mWqhd.setEnabled(enabled);
+        mPartialUpdate.setEnabled(enabled);
         if (mDialog != null) {
             mDialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(!mBusy);
             mDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(!mBusy);

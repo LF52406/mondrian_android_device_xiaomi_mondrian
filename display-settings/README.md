@@ -1,5 +1,9 @@
 # Mondrian screen resolution
 
+The companion [M11A Partial Update controls](partial-update/README.md) require
+their matching kernel changes plus the device-carried HWC/SDM patch. No separate
+display repository is required. The resolution engine itself is unchanged.
+
 System integration for **Settings → Display → Screen resolution** on POCO F5 Pro
 (`mondrian`), with English and Russian strings, Settings search, and a live summary.
 
@@ -34,6 +38,7 @@ From the existing ROM source root, after selecting the normal mondrian build tar
 
 ```bash
 bash device/xiaomi/mondrian/display-settings/apply-settingslib-patch.sh
+bash device/xiaomi/mondrian/display-settings/apply-partial-update-display-patch.sh
 m Settings MondrianDisplaySettings
 ```
 
@@ -82,8 +87,8 @@ unrelated Android 16 `frameworks_base:bq2` repository.
   default density via user/boot handling when the device is in FHD+.
 - The entry uses a signature-protected Activity. The exported provider exposes
   only search data and a read-only summary, protected by READ_SEARCH_INDEXABLES.
-  The app needs no root, network, shell execution, shared system UID, or additional
-  SELinux rules.
+  The resolution path needs no root, network, shell execution or shared system UID.
+  Partial Update adds a dedicated SELinux property read by the composer.
 
 ## Verification
 

@@ -11,6 +11,11 @@
         android:title="WQHD+"
         android:summary="@string/resolution_wqhd_summary"
         android:persistent="false" />
+    <androidx.preference.SwitchPreferenceCompat
+        android:key="partial_update"
+        android:title="@string/partial_update_title"
+        android:summary="@string/partial_update_summary"
+        android:persistent="false" />
     <com.android.settingslib.widget.FooterPreference
         android:key="resolution_footer"
         android:title="@string/resolution_footer"

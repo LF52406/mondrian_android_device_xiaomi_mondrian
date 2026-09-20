@@ -1,0 +1,2 @@
+# MondrianDisplaySettings is platform-signed and has its own app UID.
+set_prop(platform_app, mondrian_partial_update_prop)

@@ -1,0 +1,653 @@
+diff --git a/sdm/libs/core/display_base.cpp b/sdm/libs/core/display_base.cpp
+--- a/sdm/libs/core/display_base.cpp
++++ b/sdm/libs/core/display_base.cpp
+@@ -80,6 +80,7 @@
+ #include <algorithm>
+ 
+ #include "display_base.h"
++#include "mondrian_pu.h"
+ #include "hw_info_interface.h"
+ 
+ #define __CLASS__ "DisplayBase"
+@@ -755,6 +756,17 @@ DisplayError DisplayBase::ValidateGPUTargetParams() {
+ }
+ 
+ bool DisplayBase::IsValidateNeeded() {
++  const int mode = mondrian_pu::Mode(hw_panel_info_);
++  if (mode >= 0 && mode != mondrian_pu_mode_) {
++    mondrian_pu_mode_ = mode;
++    mondrian_pu_failed_ = false;
++    // Invalidate the cached composition and reset the physical ROI before
++    // applying a new policy. No live changes to kernel capabilities are needed.
++    DisablePartialUpdateOneFrameInternal();
++    pu_pending_ = mode != 0;
++    SetPUonDestScaler();
++    return true;
++  }
+   // This api checks on special cases for which Validate call may be needed.
+   if (pu_pending_ && partial_update_control_ && !disable_pu_one_frame_ &&
+       !disable_pu_on_dest_scaler_ && !(color_mgr_ && color_mgr_->NeedsPartialUpdateDisable())) {
+@@ -896,7 +908,8 @@ DisplayError DisplayBase::Prepare(LayerStack *layer_stack) {
+   // TODO(user): Temporary changes, to be removed when DRM driver supports
+   // Partial update with Destination scaler enabled.
+   if (!partial_update_control_ || disable_pu_one_frame_ ||
+-      disable_pu_on_dest_scaler_) {
++      disable_pu_on_dest_scaler_ ||
++      (mondrian_pu::IsPanel(hw_panel_info_) && (cwb_config_ || mondrian_pu_failed_))) {
+     comp_manager_->ControlPartialUpdate(display_comp_ctx_, false /* enable */);
+     disable_pu_one_frame_ = false;
+   }
+@@ -906,12 +919,44 @@ DisplayError DisplayBase::Prepare(LayerStack *layer_stack) {
+ 
+   CheckMMRMState();
+ 
++  bool retried_full_frame = false;
++  bool retry_prepare_failed = false;
++  auto retry_full_frame = [&]() {
++    if (retried_full_frame || !mondrian_pu::IsPanel(hw_panel_info_)) {
++      return false;
++    }
++    const auto &rois = disp_layer_stack_.info.left_frame_roi;
++    const bool full_frame = rois.size() == 1 && rois[0].left == 0 && rois[0].top == 0 &&
++        rois[0].right == mixer_attributes_.width && rois[0].bottom == mixer_attributes_.height;
++    if (full_frame) {
++      return false;
++    }
++    retried_full_frame = true;
++    mondrian_pu_failed_ = true;
++    pu_pending_ = false;
++    comp_manager_->PostPrepare(display_comp_ctx_, &disp_layer_stack_);
++    comp_manager_->ControlPartialUpdate(display_comp_ctx_, false);
++    comp_manager_->GenerateROI(display_comp_ctx_, &disp_layer_stack_);
++    layer_stack->needs_validate = true;
++    error = comp_manager_->PrePrepare(display_comp_ctx_, &disp_layer_stack_);
++    DLOGW("M11A: partial plan rejected; retrying complete frame");
++    retry_prepare_failed = error != kErrorNone && error != kErrorNeedsValidate &&
++                           error != kErrorNeedsLutRegen;
++    return !retry_prepare_failed;
++  };
+   while (true) {
+     error = comp_manager_->Prepare(display_comp_ctx_, &disp_layer_stack_);
+     if (error != kErrorNone) {
++      if (error != kErrorShutDown && retry_full_frame()) {
++        continue;
++      }
+       break;
+     }
+ 
++    // A rejected partial plan must not reuse a cached hardware validation.
++    if (retried_full_frame) {
++      disp_layer_stack_.info.do_hw_validate = true;
++    }
+     // Trigger validate only if needed.
+     if (disp_layer_stack_.info.do_hw_validate) {
+       error = hw_intf_->Validate(&disp_layer_stack_.info);
+@@ -927,6 +972,12 @@ DisplayError DisplayBase::Prepare(LayerStack *layer_stack) {
+       comp_manager_->PostPrepare(display_comp_ctx_, &disp_layer_stack_);
+       return error;
+     }
++    if (retry_full_frame()) {
++      continue;
++    }
++    if (retry_prepare_failed) {
++      break;
++    }
+   }
+ 
+   if (color_mgr_)
+@@ -2072,6 +2123,11 @@ std::string DisplayBase::Dump() {
+   os << "\n Left Split:" << hw_panel_info_.split_info.left_split
+      << " Right Split:" << hw_panel_info_.split_info.right_split;
+   os << "\n PartialUpdate:" << hw_panel_info_.partial_update;
++  if (mondrian_pu::IsPanel(hw_panel_info_)) {
++    os << " MondrianPolicy:" << mondrian_pu_mode_
++       << " ScalerBlocked:" << disable_pu_on_dest_scaler_
++       << " PlanRejected:" << mondrian_pu_failed_;
++  }
+   if (hw_panel_info_.partial_update) {
+     os << "\n ROI Min w:" << hw_panel_info_.min_roi_width;
+     os << " Min h:" << hw_panel_info_.min_roi_height;
+@@ -2833,6 +2889,7 @@ DisplayError DisplayBase::ReconfigureDisplay() {
+   display_attributes_ = display_attributes;
+   mixer_attributes_ = mixer_attributes;
+   hw_panel_info_ = hw_panel_info;
++  mondrian_pu_failed_ = false;
+ 
+   // TODO(user): Temporary changes, to be removed when DRM driver supports
+   // Partial update with Destination scaler enabled.
+@@ -3416,16 +3473,15 @@ DisplayError DisplayBase::ValidateDataspace(const ColorMetaData &color_metadata)
+   return kErrorNone;
+ }
+ 
+-// TODO(user): Temporary changes, to be removed when DRM driver supports
+-// Partial update with Destination scaler enabled.
+ void DisplayBase::SetPUonDestScaler() {
+-  uint32_t mixer_width = mixer_attributes_.width;
+-  uint32_t mixer_height = mixer_attributes_.height;
+-  uint32_t display_width = display_attributes_.x_pixels;
+-  uint32_t display_height = display_attributes_.y_pixels;
+-
+-  disable_pu_on_dest_scaler_ = (mixer_width != display_width ||
+-                                mixer_height != display_height) || de_enabled_;
++  const bool scaled = mixer_attributes_.width != display_attributes_.x_pixels ||
++                      mixer_attributes_.height != display_attributes_.y_pixels;
++  HWPanelInfo mapped;
++  const bool supported = mondrian_pu::IsPanel(hw_panel_info_) &&
++      hw_resource_info_.hw_dest_scalar_info.count &&
++      mondrian_pu::MapConstraints(hw_panel_info_, mixer_attributes_, display_attributes_,
++                                  mondrian_pu::Mode(hw_panel_info_), &mapped);
++  disable_pu_on_dest_scaler_ = de_enabled_ || (scaled && !supported);
+ }
+ 
+ void DisplayBase::ClearColorInfo() {
+diff --git a/sdm/libs/core/display_base.h b/sdm/libs/core/display_base.h
+--- a/sdm/libs/core/display_base.h
++++ b/sdm/libs/core/display_base.h
+@@ -382,6 +382,8 @@ class DisplayBase : public DisplayInterface {
+   bool disable_pu_on_dest_scaler_ = false;
+   bool de_enabled_ = false;
+   bool pu_pending_ = false;
++  int mondrian_pu_mode_ = -1;
++  bool mondrian_pu_failed_ = false;
+   uint32_t num_color_modes_ = 0;
+   std::vector<SDEDisplayMode> color_modes_;
+   typedef std::map<std::string, SDEDisplayMode *> ColorModeMap;
+diff --git a/sdm/libs/core/drm/hw_device_drm.cpp b/sdm/libs/core/drm/hw_device_drm.cpp
+--- a/sdm/libs/core/drm/hw_device_drm.cpp
++++ b/sdm/libs/core/drm/hw_device_drm.cpp
+@@ -104,6 +104,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <limits>
+ 
+ #include "hw_device_drm.h"
++#include "../mondrian_pu.h"
++#include <cmath>
+ #include "hw_info_interface.h"
+ 
+ #define __CLASS__ "HWDeviceDRM"
+@@ -153,6 +155,80 @@ using sde_drm::DRMCWbCaptureMode;
+ 
+ namespace sdm {
+ 
++namespace {
++
++bool GetConnectorROI(const LayerRect &roi, const HWMixerAttributes &mixer,
++                     const HWDisplayAttributes &display, const HWPanelInfo &panel,
++                     DRMRect *rect) {
++  if (!mondrian_pu::IsPanel(panel)) {
++    *rect = {UINT32(roi.left), UINT32(roi.top), UINT32(roi.right), UINT32(roi.bottom)};
++    return true;
++  }
++  if (!std::isfinite(roi.left) || !std::isfinite(roi.top) ||
++      !std::isfinite(roi.right) || !std::isfinite(roi.bottom) ||
++      roi.left < 0 || roi.top < 0 || roi.right > mixer.width || roi.bottom > mixer.height ||
++      roi.left >= roi.right || roi.top >= roi.bottom ||
++      std::floor(roi.left) != roi.left || std::floor(roi.top) != roi.top ||
++      std::floor(roi.right) != roi.right || std::floor(roi.bottom) != roi.bottom) {
++    return false;
++  }
++  return mondrian_pu::ProjectAxis(UINT32(roi.left), UINT32(roi.right), mixer.width,
++                                  display.x_pixels, panel.left_align, panel.width_align,
++                                  panel.min_roi_width, &rect->left, &rect->right) &&
++         mondrian_pu::ProjectAxis(UINT32(roi.top), UINT32(roi.bottom), mixer.height,
++                                  display.y_pixels, panel.top_align, panel.height_align,
++                                  panel.min_roi_height, &rect->top, &rect->bottom);
++}
++
++bool ValidateM11aROI(const HWLayersInfo &layers, const HWMixerAttributes &mixer,
++                     const HWDisplayAttributes &display, const HWPanelInfo &panel) {
++  if (!mondrian_pu::IsPanel(panel)) {
++    return true;
++  }
++  if (layers.left_frame_roi.size() != 1) {
++    return false;
++  }
++  const auto &roi = layers.left_frame_roi[0];
++  if (roi.left == 0 && roi.top == 0 && roi.right == mixer.width && roi.bottom == mixer.height) {
++    return true;
++  }
++  DRMRect connector = {};
++  if (!GetConnectorROI(roi, mixer, display, panel, &connector)) {
++    return false;
++  }
++  if (mixer.width == display.x_pixels && mixer.height == display.y_pixels) {
++    return true;
++  }
++  // libsdmextension owns scaler phase/overfetch calculations. A property or a
++  // rescaled rectangle cannot substitute for a matching resource-manager plan.
++  if (layers.dest_scale_info_map.empty() || layers.dest_scale_info_map.size() > 2) {
++    return false;
++  }
++  uint32_t covered_width = 0;
++  uint32_t next_left = connector.left;
++  for (const auto &entry : layers.dest_scale_info_map) {
++    const HWDestScaleInfo *scale = entry.second;
++    if (!scale || scale->scale_data.enable.detail_enhance) {
++      return false;
++    }
++    if (!scale->scale_data.enable.scale) {
++      continue;
++    }
++    const auto &out = scale->panel_roi;
++    if (out.left != next_left || out.top != connector.top || out.bottom != connector.bottom ||
++        out.right <= out.left || out.right > connector.right ||
++        scale->scale_data.dst_width != out.right - out.left ||
++        scale->scale_data.dst_height != out.bottom - out.top) {
++      return false;
++    }
++    covered_width += scale->scale_data.dst_width;
++    next_left = UINT32(out.right);
++  }
++  return next_left == connector.right && covered_width == connector.right - connector.left;
++}
++
++}  // namespace
++
+ std::atomic<uint32_t> HWDeviceDRM::hw_dest_scaler_blocks_used_(0);
+ HWCwbConfig HWDeviceDRM::cwb_config_ = {};
+ std::mutex HWDeviceDRM::cwb_state_lock_;
+@@ -1398,25 +1474,26 @@ void HWDeviceDRM::SetupAtomic(Fence::ScopedRef &scoped_ref, HWLayersInfo *hw_lay
+   bool update_luts = hw_layers_info->updates_mask.test(kUpdateLuts);
+ 
+   if (hw_panel_info_.partial_update && update_config) {
+-    if (IsFullFrameUpdate(*hw_layers_info)) {
++    constexpr uint32_t kNumMaxROIs = 4;
++    if (IsFullFrameUpdate(*hw_layers_info) ||
++        hw_layers_info->left_frame_roi.size() > kNumMaxROIs) {
+       ResetROI();
+     } else {
+-      const int kNumMaxROIs = 4;
+       DRMRect crtc_rects[kNumMaxROIs] = {{0, 0, mixer_attributes_.width, mixer_attributes_.height}};
+       DRMRect conn_rects[kNumMaxROIs] = {{0, 0, display_attributes_[index].x_pixels,
+                                           display_attributes_[index].y_pixels}};
+ 
+       for (uint32_t i = 0; i < hw_layers_info->left_frame_roi.size(); i++) {
+-        auto &roi = hw_layers_info->left_frame_roi.at(i);
+-        // TODO(user): In multi PU, stitch ROIs vertically adjacent and upate plane destination
++        const auto &roi = hw_layers_info->left_frame_roi.at(i);
++        // CRTC ROI is expressed in layer-mixer coordinates. Connector ROI is
++        // expressed in physical panel coordinates and must preserve all damage.
+         crtc_rects[i].left = UINT32(roi.left);
+         crtc_rects[i].right = UINT32(roi.right);
+         crtc_rects[i].top = UINT32(roi.top);
+         crtc_rects[i].bottom = UINT32(roi.bottom);
+-        conn_rects[i].left = UINT32(roi.left);
+-        conn_rects[i].right = UINT32(roi.right);
+-        conn_rects[i].top = UINT32(roi.top);
+-        conn_rects[i].bottom = UINT32(roi.bottom);
++        // ValidateM11aROI has already checked this mapping before SetupAtomic.
++        GetConnectorROI(roi, mixer_attributes_, display_attributes_[index],
++                         hw_panel_info_, &conn_rects[i]);
+       }
+ 
+       uint32_t num_rects = std::max(1u, UINT32(hw_layers_info->left_frame_roi.size()));
+@@ -1763,6 +1840,13 @@ void HWDeviceDRM::ClearSolidfillStages() {
+ DisplayError HWDeviceDRM::Validate(HWLayersInfo *hw_layers_info) {
+   DTRACE_SCOPED();
+ 
++  if (!ValidateM11aROI(*hw_layers_info, mixer_attributes_,
++                       display_attributes_[current_mode_index_], hw_panel_info_)) {
++    DLOGW("M11A: ROI does not match the destination scaler plan");
++    DumpHWLayers(hw_layers_info);
++    return kErrorNotSupported;
++  }
++
+   DisplayError err = kErrorNone;
+   registry_.Register(hw_layers_info);
+ 
+@@ -1786,6 +1870,12 @@ DisplayError HWDeviceDRM::Validate(HWLayersInfo *hw_layers_info) {
+ DisplayError HWDeviceDRM::Commit(HWLayersInfo *hw_layers_info) {
+   DTRACE_SCOPED();
+ 
++  if (!ValidateM11aROI(*hw_layers_info, mixer_attributes_,
++                       display_attributes_[current_mode_index_], hw_panel_info_)) {
++    DLOGW("M11A: ROI does not match the destination scaler plan");
++    return kErrorNotSupported;
++  }
++
+   DisplayError err = kErrorNone;
+   registry_.Register(hw_layers_info);
+ 
+@@ -2738,16 +2828,24 @@ void HWDeviceDRM::DumpHWLayers(HWLayersInfo *hw_layers_info) {
+         INT(right_frame_roi[i].bottom));
+   }
+ 
+-  for (uint32_t i = 0; i < dest_scale_info_map.size(); i++) {
+-    HWDestScaleInfo *dest_scalar_data = dest_scale_info_map[i];
++  for (const auto &entry : dest_scale_info_map) {
++    HWDestScaleInfo *dest_scalar_data = entry.second;
++    if (!dest_scalar_data) {
++      DLOGI("Dest scalar index %d has no configuration", entry.first);
++      continue;
++    }
+     if (dest_scalar_data->scale_data.enable.scale) {
+       HWScaleData &scale_data = dest_scalar_data->scale_data;
+-      DLOGI("Dest scalar index %d Mixer WxH %dx%d", i,
++      DLOGI("Dest scalar index %d Mixer WxH %dx%d", entry.first,
+             dest_scalar_data->mixer_width, dest_scalar_data->mixer_height);
+       DLOGI("Panel ROI [%d, %d, %d, %d]", INT(dest_scalar_data->panel_roi.left),
+            INT(dest_scalar_data->panel_roi.top), INT(dest_scalar_data->panel_roi.right),
+            INT(dest_scalar_data->panel_roi.bottom));
+       DLOGI("Dest scalar Dst WxH %dx%d", scale_data.dst_width, scale_data.dst_height);
++      DLOGI("Dest scalar Src WxH %dx%d phase_step %d,%d init_phase %d,%d",
++            scale_data.plane[0].src_width, scale_data.plane[0].src_height,
++            scale_data.plane[0].phase_step_x, scale_data.plane[0].phase_step_y,
++            scale_data.plane[0].init_phase_x, scale_data.plane[0].init_phase_y);
+     }
+   }
+ 
+diff --git a/sdm/libs/core/drm/hw_peripheral_drm.cpp b/sdm/libs/core/drm/hw_peripheral_drm.cpp
+--- a/sdm/libs/core/drm/hw_peripheral_drm.cpp
++++ b/sdm/libs/core/drm/hw_peripheral_drm.cpp
+@@ -70,6 +70,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <algorithm>
+ 
+ #include "hw_peripheral_drm.h"
++#include "../mondrian_pu.h"
+ 
+ #define __CLASS__ "HWPeripheralDRM"
+ 
+@@ -306,6 +307,58 @@ void HWPeripheralDRM::SetDestScalarData(const HWLayersInfo &hw_layer_info) {
+     return;
+   }
+ 
++  if (mondrian_pu::IsPanel(hw_panel_info_) &&
++      !hw_layer_info.dest_scale_info_map.empty()) {
++    if (!hw_layer_info.updates_mask.test(kUpdateResources)) {
++      return;
++    }
++    // Keep entries packed but preserve physical scaler indices. In a right-only
++    // update map[1] must become ds_cfg[0] with index=1, not a stale ds_cfg[0].
++    bool any_enabled = false;
++    for (const auto &entry : hw_layer_info.dest_scale_info_map) {
++      if (!entry.second || entry.first >= scalar_data_.size()) {
++        return;
++      }
++      any_enabled |= entry.second->scale_data.enable.scale != 0;
++    }
++    sde_dest_scalar_data_ = {};
++    uint32_t count = 0;
++    for (const auto &entry : hw_layer_info.dest_scale_info_map) {
++      const auto *info = entry.second;
++      if (any_enabled && !info->scale_data.enable.scale) {
++        continue;
++      }
++      if (count >= sizeof(sde_dest_scalar_data_.ds_cfg) /
++                   sizeof(sde_dest_scalar_data_.ds_cfg[0])) {
++        return;
++      }
++      SDEScaler *scale = &scalar_data_[entry.first];
++      hw_scale_->SetScaler(info->scale_data, scale);
++      auto &cfg = sde_dest_scalar_data_.ds_cfg[count++];
++      cfg.index = entry.first;
++      cfg.flags = SDE_DRM_DESTSCALER_SCALE_UPDATE;
++      if (scale->scaler_v2.enable) {
++        cfg.flags |= SDE_DRM_DESTSCALER_ENABLE;
++      }
++      if (scale->scaler_v2.de.enable) {
++        cfg.flags |= SDE_DRM_DESTSCALER_ENHANCER_UPDATE;
++      }
++      if (hw_panel_info_.partial_update) {
++        cfg.flags |= SDE_DRM_DESTSCALER_PU_ENABLE;
++      }
++      cfg.lm_width = info->mixer_width;
++      cfg.lm_height = info->mixer_height;
++      cfg.scaler_cfg = reinterpret_cast<uint64_t>(&scale->scaler_v2);
++    }
++    sde_dest_scalar_data_.num_dest_scaler = count;
++    drm_atomic_intf_->Perform(DRMOps::CRTC_SET_DEST_SCALER_CONFIG, token_.crtc_id,
++                              reinterpret_cast<uint64_t>(&sde_dest_scalar_data_));
++    // This path submits every resource change, including changes of active
++    // indices and LM dimensions. Buffer-only commits retain the last plan.
++    needs_ds_update_ = false;
++    return;
++  }
++
+   for (uint32_t i = 0; i < dest_scaler_blocks_used_; i++) {
+     auto it = hw_layer_info.dest_scale_info_map.find(i);
+ 
+diff --git a/sdm/libs/core/mondrian_pu.h b/sdm/libs/core/mondrian_pu.h
+new file mode 100644
+--- /dev/null
++++ b/sdm/libs/core/mondrian_pu.h
+@@ -0,0 +1,58 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright (C) 2026
++#ifndef __MONDRIAN_PU_H__
++#define __MONDRIAN_PU_H__
++
++#include <cstring>
++#include <private/hw_info_types.h>
++#include <utils/debug.h>
++#include "mondrian_pu_geometry.h"
++
++namespace sdm {
++namespace mondrian_pu {
++
++constexpr const char *kModeProperty = "persist.sys.mondrian.partial_update";
++
++inline bool IsPanel(const HWPanelInfo &panel) {
++  return panel.is_primary_panel && panel.mode == kModeCommand &&
++         !std::strcmp(panel.panel_name, "xiaomi 42 02 0a cmd mode dsc dsi panel");
++}
++
++// 0: full frame; 2: DSC-aligned rectangles. Legacy mode 1 is promoted to 2.
++inline int Mode(const HWPanelInfo &panel) {
++  if (!IsPanel(panel)) {
++    return -1;
++  }
++  int mode = 2;
++  Debug::GetProperty(kModeProperty, &mode);
++  return mode == 0 ? 0 : 2;
++}
++
++inline bool MapConstraints(const HWPanelInfo &panel, const HWMixerAttributes &mixer,
++                            const HWDisplayAttributes &display, int mode, HWPanelInfo *out) {
++  *out = panel;
++  if (!IsPanel(panel)) {
++    return false;
++  }
++  if (!panel.partial_update || display.x_pixels != 1440 || display.y_pixels != 3200 ||
++      !mixer.width || !mixer.height || mode != 2) {
++    out->partial_update = false;
++    return false;
++  }
++  const HWPanelInfo physical = *out;
++  const bool valid =
++      SourceAlignment(physical.left_align, mixer.width, display.x_pixels, &out->left_align) &&
++      SourceAlignment(physical.width_align, mixer.width, display.x_pixels, &out->width_align) &&
++      SourceMinimum(physical.min_roi_width, mixer.width, display.x_pixels,
++                    out->width_align, &out->min_roi_width) &&
++      SourceAlignment(physical.top_align, mixer.height, display.y_pixels, &out->top_align) &&
++      SourceAlignment(physical.height_align, mixer.height, display.y_pixels, &out->height_align) &&
++      SourceMinimum(physical.min_roi_height, mixer.height, display.y_pixels,
++                    out->height_align, &out->min_roi_height);
++  out->partial_update = valid;
++  return valid;
++}
++
++}  // namespace mondrian_pu
++}  // namespace sdm
++#endif
+diff --git a/sdm/libs/core/mondrian_pu_geometry.h b/sdm/libs/core/mondrian_pu_geometry.h
+new file mode 100644
+--- /dev/null
++++ b/sdm/libs/core/mondrian_pu_geometry.h
+@@ -0,0 +1,78 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright (C) 2026
++#ifndef __MONDRIAN_PU_GEOMETRY_H__
++#define __MONDRIAN_PU_GEOMETRY_H__
++
++#include <cstdint>
++
++namespace sdm {
++namespace mondrian_pu {
++
++// All coordinates here are exclusive right/bottom edges, never DCS end addresses.
++inline uint64_t Gcd(uint64_t a, uint64_t b) {
++  while (b) {
++    const uint64_t next = a % b;
++    a = b;
++    b = next;
++  }
++  return a;
++}
++
++// Smallest source grid whose projection is integral and aligned on the panel.
++// FHD+ examples: 720 panel columns -> 540 mixer columns; 32 rows -> 24 rows.
++inline bool SourceAlignment(uint32_t alignment, uint32_t source, uint32_t panel,
++                            int *result) {
++  if (!alignment || !source || !panel || source > 65535 || panel > 65535 || !result) {
++    return false;
++  }
++  const uint64_t numerator = uint64_t(alignment) * source;
++  const uint64_t step = numerator / Gcd(numerator, panel);
++  if (!step || step > source || source % step) {
++    return false;
++  }
++  *result = int(step);
++  return true;
++}
++
++inline bool SourceMinimum(uint32_t minimum, uint32_t source, uint32_t panel,
++                          uint32_t alignment, int *result) {
++  if (!minimum || !source || !panel || !alignment || !result) {
++    return false;
++  }
++  uint64_t value = (uint64_t(minimum) * source + panel - 1) / panel;
++  value = (value + alignment - 1) / alignment * alignment;
++  if (!value || value > source || value > 65535) {
++    return false;
++  }
++  *result = int(value);
++  return true;
++}
++
++// A late expansion would disagree with the already prepared scaler/DSC stream.
++// Accept only an exact mapping. Unsupported plans are retried as full frames.
++inline bool ProjectAxis(uint32_t start, uint32_t end, uint32_t source, uint32_t panel,
++                        uint32_t start_alignment, uint32_t size_alignment,
++                        uint32_t minimum, uint32_t *out_start, uint32_t *out_end) {
++  if (!source || !panel || source > 65535 || panel > 65535 || start >= end ||
++      end > source || !start_alignment || !size_alignment || !minimum ||
++      !out_start || !out_end) {
++    return false;
++  }
++  const uint64_t first = uint64_t(start) * panel;
++  const uint64_t last = uint64_t(end) * panel;
++  if (first % source || last % source) {
++    return false;
++  }
++  const uint32_t left = uint32_t(first / source);
++  const uint32_t right = uint32_t(last / source);
++  if (left % start_alignment || (right - left) % size_alignment || right - left < minimum) {
++    return false;
++  }
++  *out_start = left;
++  *out_end = right;
++  return true;
++}
++
++}  // namespace mondrian_pu
++}  // namespace sdm
++#endif
+diff --git a/sdm/libs/core/strategy.cpp b/sdm/libs/core/strategy.cpp
+--- a/sdm/libs/core/strategy.cpp
++++ b/sdm/libs/core/strategy.cpp
+@@ -27,6 +27,7 @@
+ #include <vector>
+ 
+ #include "strategy.h"
++#include "mondrian_pu.h"
+ #include "utils/rect.h"
+ 
+ #define __CLASS__ "Strategy"
+@@ -61,8 +62,10 @@ DisplayError Strategy::Init() {
+       return error;
+     }
+ 
++    HWPanelInfo pu_panel_info =
++        PartialUpdatePanelInfo(hw_panel_info_, mixer_attributes_, display_attributes_);
+     error = extension_intf_->CreatePartialUpdate(
+-        display_id_, display_type_, hw_resource_info_, hw_panel_info_, mixer_attributes_,
++        display_id_, display_type_, hw_resource_info_, pu_panel_info, mixer_attributes_,
+         display_attributes_, fb_config_, &partial_update_intf_);
+   }
+ 
+@@ -81,11 +84,38 @@ DisplayError Strategy::Deinit() {
+   return kErrorNone;
+ }
+ 
++HWPanelInfo Strategy::PartialUpdatePanelInfo(const HWPanelInfo &panel,
++                                            const HWMixerAttributes &mixer,
++                                            const HWDisplayAttributes &display) {
++  HWPanelInfo result = panel;
++  mondrian_pu_mode_ = mondrian_pu::Mode(panel);
++  if (mondrian_pu_mode_ >= 0) {
++    mondrian_pu::MapConstraints(panel, mixer, display, mondrian_pu_mode_, &result);
++  }
++  return result;
++}
++
+ void Strategy::GenerateROI(DispLayerStack *disp_layer_stack, const PUConstraints &pu_constraints) {
+   disp_layer_stack_ = disp_layer_stack;
+-
++  const int mode = mondrian_pu::Mode(hw_panel_info_);
++  if (extension_intf_ && mode >= 0 && mode != mondrian_pu_mode_) {
++    if (partial_update_intf_) {
++      extension_intf_->DestroyPartialUpdate(partial_update_intf_);
++      partial_update_intf_ = nullptr;
++    }
++    HWPanelInfo panel = PartialUpdatePanelInfo(hw_panel_info_, mixer_attributes_,
++                                              display_attributes_);
++    extension_intf_->CreatePartialUpdate(display_id_, display_type_, hw_resource_info_, panel,
++                                         mixer_attributes_, display_attributes_, fb_config_,
++                                         &partial_update_intf_);
++  }
++  pu_frame_enabled_ = mode < 0 || (pu_constraints.enable && mode != 0);
+   if (partial_update_intf_) {
+-    partial_update_intf_->Start(pu_constraints);
++    PUConstraints constraints = pu_constraints;
++    if (mode >= 0) {
++      constraints.enable = pu_frame_enabled_;
++    }
++    partial_update_intf_->Start(constraints);
+   }
+ 
+   return GenerateROI();
+@@ -169,7 +199,8 @@ DisplayError Strategy::GetNextStrategy() {
+ void Strategy::GenerateROI() {
+   bool split_display = false;
+ 
+-  if (partial_update_intf_ && partial_update_intf_->GenerateROI(disp_layer_stack_) == kErrorNone) {
++  if (pu_frame_enabled_ && partial_update_intf_ &&
++      partial_update_intf_->GenerateROI(disp_layer_stack_) == kErrorNone) {
+     return;
+   }
+ 
+@@ -213,7 +244,9 @@ DisplayError Strategy::Reconfigure(const HWPanelInfo &hw_panel_info,
+     partial_update_intf_ = NULL;
+   }
+ 
+-  extension_intf_->CreatePartialUpdate(display_id_, display_type_, hw_resource_info_, hw_panel_info,
++  HWPanelInfo pu_panel_info =
++      PartialUpdatePanelInfo(hw_panel_info, mixer_attributes, display_attributes);
++  extension_intf_->CreatePartialUpdate(display_id_, display_type_, hw_resource_info_, pu_panel_info,
+                                        mixer_attributes, display_attributes, fb_config,
+                                        &partial_update_intf_);
+ 
+diff --git a/sdm/libs/core/strategy.h b/sdm/libs/core/strategy.h
+--- a/sdm/libs/core/strategy.h
++++ b/sdm/libs/core/strategy.h
+@@ -61,6 +61,11 @@ class Strategy {
+ 
+  private:
+   void GenerateROI();
++  HWPanelInfo PartialUpdatePanelInfo(const HWPanelInfo &panel,
++                                     const HWMixerAttributes &mixer,
++                                     const HWDisplayAttributes &display);
++  int mondrian_pu_mode_ = -1;
++  bool pu_frame_enabled_ = true;
+ 
+   ExtensionInterface *extension_intf_ = NULL;
+   StrategyInterface *strategy_intf_ = NULL;

@@ -12,9 +12,12 @@
     <string name="resolution_error">Couldn\'t update the screen resolution. Try again.</string>
     <string name="resolution_custom">Custom</string>
     <string name="resolution_current">%1$s · %2$d × %3$d</string>
-    <string name="resolution_search_keywords">screen resolution, display, FHD, WQHD, 1080p, 1440p</string>
+    <string name="resolution_search_keywords">screen resolution, display, FHD, WQHD, 1080p, 1440p, Partial Update, ROI</string>
     <plurals name="resolution_countdown">
         <item quantity="one">The previous resolution will be restored in %1$d second unless you keep the changes.</item>
         <item quantity="other">The previous resolution will be restored in %1$d seconds unless you keep the changes.</item>
     </plurals>
+    <string name="partial_update_title">Partial screen update</string>
+    <string name="partial_update_summary">Update changed rectangular areas when possible. A full frame is used automatically when required.</string>
+    <string name="partial_update_error">Could not save the partial update setting.</string>
 </resources>

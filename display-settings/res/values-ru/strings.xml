@@ -12,11 +12,14 @@
     <string name="resolution_error">Не удалось изменить разрешение экрана. Повторите попытку.</string>
     <string name="resolution_custom">Другое</string>
     <string name="resolution_current">%1$s · %2$d × %3$d</string>
-    <string name="resolution_search_keywords">разрешение экрана, дисплей, FHD, WQHD, 1080p, 1440p</string>
+    <string name="resolution_search_keywords">разрешение экрана, дисплей, FHD, WQHD, 1080p, 1440p, Partial Update, ROI</string>
     <plurals name="resolution_countdown">
         <item quantity="one">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунду.</item>
         <item quantity="few">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунды.</item>
         <item quantity="many">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунд.</item>
         <item quantity="other">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунды.</item>
     </plurals>
+    <string name="partial_update_title">Частичное обновление экрана</string>
+    <string name="partial_update_summary">Обновлять изменившиеся прямоугольные области, когда это возможно. При необходимости автоматически используется полный кадр.</string>
+    <string name="partial_update_error">Не удалось сохранить настройку частичного обновления.</string>
 </resources>
