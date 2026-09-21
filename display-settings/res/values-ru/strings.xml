@@ -2,9 +2,13 @@
 <!-- Copyright (C) 2026 The LineageOS Project; SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <string name="resolution_title">Разрешение экрана</string>
+    <string name="resolution_section_title">Чёткость изображения</string>
     <string name="resolution_fhd_summary">1080 × 2400\nСбалансированная чёткость и меньшая нагрузка на графику</string>
     <string name="resolution_wqhd_summary">1440 × 3200\nМаксимальная чёткость</string>
-    <string name="resolution_footer">Размер текста и элементов интерфейса сохраняется максимально близким к текущему. При смене разрешения некоторые приложения могут перезапуститься.</string>
+    <string name="resolution_fhd_load">Меньшая нагрузка</string>
+    <string name="resolution_wqhd_detail">Больше деталей</string>
+    <string name="resolution_scale_note">Размер текста и элементов остаётся привычным.</string>
+    <string name="resolution_footer">При смене разрешения некоторые приложения могут перезапуститься.</string>
     <string name="resolution_owner_only">Изменять разрешение может только владелец устройства на разблокированном POCO F5 Pro.</string>
     <string name="resolution_confirm_title">Сохранить это разрешение?</string>
     <string name="resolution_keep">Сохранить</string>
@@ -19,7 +23,10 @@
         <item quantity="many">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунд.</item>
         <item quantity="other">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунды.</item>
     </plurals>
+
     <string name="partial_update_title">Частичное обновление экрана</string>
-    <string name="partial_update_summary">Обновлять изменившиеся прямоугольные области, когда это возможно. При необходимости автоматически используется полный кадр.</string>
+    <string name="partial_update_full_screen">Весь экран</string>
+    <string name="partial_update_changed_only">Только изменения</string>
+    <string name="partial_update_summary">Обновляется только изменившаяся область. Когда это невозможно, автоматически используется весь экран.</string>
     <string name="partial_update_error">Не удалось сохранить настройку частичного обновления.</string>
 </resources>
