@@ -12,20 +12,17 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.preference.Preference;
-import androidx.preference.SwitchPreferenceCompat;
 
-import com.android.settingslib.widget.SelectorWithWidgetPreference;
 import com.android.settingslib.widget.SettingsBasePreferenceFragment;
 
-/** Uses the same expressive SettingsLib widgets/theme as the ROM's Settings and Xiaomi Parts. */
+/** Screen resolution and M11A Partial Update controls using custom Settings cards. */
 public final class ResolutionFragment extends SettingsBasePreferenceFragment {
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final Runnable mTick = this::tick;
     private ResolutionController mController;
-    private SelectorWithWidgetPreference mFhd;
-    private SelectorWithWidgetPreference mWqhd;
+    private ResolutionCardsPreference mResolutionCards;
     private Preference mFooter;
-    private SwitchPreferenceCompat mPartialUpdate;
+    private PartialUpdatePreference mPartialUpdate;
     private AlertDialog mDialog;
     private ResolutionEngine.Pending mPending;
     private boolean mBusy;
@@ -35,16 +32,14 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
     public void onCreatePreferences(Bundle state, String rootKey) {
         setPreferencesFromResource(R.xml.screen_resolution, rootKey);
         mController = ResolutionController.get(requireContext());
-        mFhd = findPreference("fhd");
-        mWqhd = findPreference("wqhd");
-        mFooter = findPreference("resolution_footer");
-        mFhd.setOnClickListener(preference -> preview(1080));
-        mWqhd.setOnClickListener(preference -> preview(1440));
+
+        mResolutionCards = findPreference("resolution_cards");
         mPartialUpdate = findPreference("partial_update");
-        mPartialUpdate.setOnPreferenceChangeListener((preference, value) -> {
-            changePartialUpdate((Boolean) value ? 2 : 0);
-            return false;
-        });
+        mFooter = findPreference("resolution_footer");
+
+        mResolutionCards.setOnResolutionSelectedListener(this::preview);
+        mPartialUpdate.setOnCheckedChangeListener(
+                checked -> changePartialUpdate(checked ? 2 : 0));
         updateEnabled();
     }
 
@@ -152,8 +147,7 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
         mAllowed = ui.allowed;
         mPending = ui.pending;
         renderPartialUpdate();
-        mFhd.setChecked(ui.frame.width == 1080 && ui.frame.height == 2400);
-        mWqhd.setChecked(ui.frame.width == 1440 && ui.frame.height == 3200);
+        mResolutionCards.setSelectedWidth(ui.frame.width);
         mFooter.setTitle(mAllowed ? R.string.resolution_footer : R.string.resolution_owner_only);
         updateEnabled();
         mHandler.removeCallbacks(mTick);
@@ -208,8 +202,7 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
 
     private void updateEnabled() {
         boolean enabled = mAllowed && !mBusy && mPending == null;
-        mFhd.setEnabled(enabled);
-        mWqhd.setEnabled(enabled);
+        mResolutionCards.setEnabled(enabled);
         mPartialUpdate.setEnabled(enabled);
         if (mDialog != null) {
             mDialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(!mBusy);
