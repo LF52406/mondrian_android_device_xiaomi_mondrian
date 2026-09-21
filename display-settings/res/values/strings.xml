@@ -2,9 +2,13 @@
 <!-- Copyright (C) 2026 The LineageOS Project; SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <string name="resolution_title">Screen resolution</string>
+    <string name="resolution_section_title">Image clarity</string>
     <string name="resolution_fhd_summary">1080 × 2400\nBalanced clarity with lower graphics workload</string>
     <string name="resolution_wqhd_summary">1440 × 3200\nMaximum clarity</string>
-    <string name="resolution_footer">The size of text and interface elements is preserved as closely as possible. Some apps may restart when you change the resolution.</string>
+    <string name="resolution_fhd_load">Lower workload</string>
+    <string name="resolution_wqhd_detail">More detail</string>
+    <string name="resolution_scale_note">Text and interface elements stay at a familiar size.</string>
+    <string name="resolution_footer">Some apps may restart when you change the resolution.</string>
     <string name="resolution_owner_only">Only the device owner can change the screen resolution on an unlocked POCO F5 Pro.</string>
     <string name="resolution_confirm_title">Keep this resolution?</string>
     <string name="resolution_keep">Keep changes</string>
@@ -17,7 +21,10 @@
         <item quantity="one">The previous resolution will be restored in %1$d second unless you keep the changes.</item>
         <item quantity="other">The previous resolution will be restored in %1$d seconds unless you keep the changes.</item>
     </plurals>
+
     <string name="partial_update_title">Partial screen update</string>
-    <string name="partial_update_summary">Update changed rectangular areas when possible. A full frame is used automatically when required.</string>
+    <string name="partial_update_full_screen">Full screen</string>
+    <string name="partial_update_changed_only">Changed areas only</string>
+    <string name="partial_update_summary">Only the changed area is updated. When that is not possible, the full screen is used automatically.</string>
     <string name="partial_update_error">Could not save the partial update setting.</string>
 </resources>
