@@ -39,6 +39,7 @@ final class ResolutionController {
 
     final DisplayBackend backend;
     final ResolutionEngine engine;
+    final PartialUpdateBackend partialUpdate;
     private final Context mContext;
     private final Handler mMain = new Handler(Looper.getMainLooper());
     private final ExecutorService mWorker = Executors.newSingleThreadExecutor();
@@ -51,6 +52,7 @@ final class ResolutionController {
     private ResolutionController(Context context) {
         mContext = context.getApplicationContext().createDeviceProtectedStorageContext();
         backend = new DisplayBackend(mContext);
+        partialUpdate = new PartialUpdateBackend();
         engine = new ResolutionEngine(backend, new Journal(mContext),
                 new ResolutionEngine.Clock() {
                     public long elapsedRealtime() { return SystemClock.elapsedRealtime(); }
@@ -60,7 +62,6 @@ final class ResolutionController {
                     }
                 }, new AlarmWatchdog(mContext));
         if (UserHandle.myUserId() == UserHandle.USER_SYSTEM) {
-            // A17 sends USER_SWITCHED with FLAG_RECEIVER_REGISTERED_ONLY.
             IntentFilter users = new IntentFilter();
             users.addAction(Intent.ACTION_USER_SWITCHED);
             users.addAction(Intent.ACTION_USER_ADDED);
@@ -77,7 +78,7 @@ final class ResolutionController {
                 result = work.run();
             } catch (Exception e) {
                 error = e;
-                Log.e(TAG, "Resolution operation failed", e);
+                Log.e(TAG, "Display operation failed", e);
             }
             try {
                 mContext.getContentResolver().notifyChange(SUMMARY_URI, null);
@@ -106,7 +107,6 @@ final class ResolutionController {
         }
 
         public void schedule(String token, long deadline) {
-            // The receiver checks the durable deadline. Even a previously queued alarm is safe.
             mAlarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP,
                     deadline, intent(PendingIntent.FLAG_UPDATE_CURRENT));
         }

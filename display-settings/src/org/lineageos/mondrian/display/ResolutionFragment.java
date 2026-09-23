@@ -4,40 +4,64 @@
 package org.lineageos.mondrian.display;
 
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.os.SystemClock;
 import android.os.UserHandle;
+import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Switch;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AlertDialog;
-import androidx.preference.Preference;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.fragment.app.Fragment;
 
-import com.android.settingslib.widget.SelectorWithWidgetPreference;
-import com.android.settingslib.widget.SettingsBasePreferenceFragment;
+import java.io.IOException;
 
-/** Uses the same expressive SettingsLib widgets/theme as the ROM's Settings and Xiaomi Parts. */
-public final class ResolutionFragment extends SettingsBasePreferenceFragment {
-    private final Handler mHandler = new Handler(Looper.getMainLooper());
-    private final Runnable mTick = this::tick;
+public final class ResolutionFragment extends Fragment {
     private ResolutionController mController;
-    private SelectorWithWidgetPreference mFhd;
-    private SelectorWithWidgetPreference mWqhd;
-    private Preference mFooter;
-    private AlertDialog mDialog;
-    private ResolutionEngine.Pending mPending;
+    private ResolutionCardView mFhd;
+    private ResolutionCardView mWqhd;
+    private Switch mPartialSwitch;
+
     private boolean mBusy;
     private boolean mAllowed;
+    private boolean mPartialAvailable;
+    private boolean mUpdatingSwitch;
 
     @Override
-    public void onCreatePreferences(Bundle state, String rootKey) {
-        setPreferencesFromResource(R.xml.screen_resolution, rootKey);
+    public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container,
+            Bundle state) {
+        return inflater.inflate(R.layout.fragment_screen_resolution, container, false);
+    }
+
+    @Override
+    public void onViewCreated(@NonNull View view, @Nullable Bundle state) {
+        super.onViewCreated(view, state);
         mController = ResolutionController.get(requireContext());
-        mFhd = findPreference("fhd");
-        mWqhd = findPreference("wqhd");
-        mFooter = findPreference("resolution_footer");
-        mFhd.setOnClickListener(preference -> preview(1080));
-        mWqhd.setOnClickListener(preference -> preview(1440));
+        mFhd = view.findViewById(R.id.resolution_fhd);
+        mWqhd = view.findViewById(R.id.resolution_wqhd);
+        mPartialSwitch = view.findViewById(R.id.partial_update_switch);
+
+        mFhd.bind(
+                getString(R.string.resolution_fhd_title),
+                getString(R.string.resolution_fhd_pixels),
+                getString(R.string.resolution_fhd_summary),
+                true);
+        mWqhd.bind(
+                getString(R.string.resolution_wqhd_title),
+                getString(R.string.resolution_wqhd_pixels),
+                getString(R.string.resolution_wqhd_summary),
+                false);
+
+        mFhd.setOnClickListener(v -> applyResolution(1080));
+        mWqhd.setOnClickListener(v -> applyResolution(1440));
+        mPartialSwitch.setOnCheckedChangeListener((button, checked) -> {
+            if (!mUpdatingSwitch) {
+                setPartialUpdateEnabled(checked);
+            }
+        });
+
         updateEnabled();
     }
 
@@ -47,43 +71,82 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
         refresh();
     }
 
-    @Override
-    public void onStop() {
-        mHandler.removeCallbacks(mTick);
-        // A real departure cancels the preview. WM density/size recreation must retain it.
-        if (mPending != null && !requireActivity().isChangingConfigurations()) {
-            String token = mPending.token;
-            mController.execute(() -> {
-                mController.engine.rollback(token);
-                return null;
-            }, (unused, error) -> {});
-        }
-        if (mDialog != null) {
-            mDialog.dismiss();
-            mDialog = null;
-        }
-        super.onStop();
+    private void applyResolution(int width) {
+        if (mBusy || !mAllowed) return;
+
+        run(R.string.resolution_error, () -> {
+            ResolutionEngine.Frame before = mController.backend.read();
+            if (width == 1080
+                    && (before.width != 1080 || before.height != 2400)) {
+                // FHD does not support this M11A ROI path. This precondition is strict:
+                // verify the real module parameter is disabled before shrinking the logical mode.
+                mController.partialUpdate.ensureDisabledForFhd();
+            }
+
+            try {
+                ResolutionEngine.Pending pending = mController.engine.preview(width);
+                if (pending != null && !mController.engine.confirm(pending.token)) {
+                    throw new IOException("Resolution preview could not be confirmed");
+                }
+            } catch (Exception failure) {
+                try {
+                    ResolutionEngine.Frame actual = mController.backend.read();
+                    mController.partialUpdate.reconcile(actual.width, actual.height);
+                } catch (Exception restoreFailure) {
+                    failure.addSuppressed(restoreFailure);
+                }
+                throw failure;
+            }
+
+            ResolutionEngine.Frame actual = mController.backend.read();
+            // Once the resolution transaction is committed, failure to restore the optional
+            // WQHD Partial Update preference must not be misreported as a resolution failure.
+            reconcilePartialBestEffort(actual);
+            return readUi();
+        });
     }
 
-    private void preview(int width) {
-        if (mBusy || !mAllowed || mPending != null) return;
-        run(() -> {
-            mController.engine.preview(width);
+    private void setPartialUpdateEnabled(boolean enabled) {
+        if (mBusy || !mAllowed || !mPartialAvailable) {
+            refresh();
+            return;
+        }
+
+        run(R.string.partial_update_error, () -> {
+            ResolutionEngine.Frame frame = mController.backend.read();
+            mController.partialUpdate.setUserEnabled(
+                    enabled, frame.width, frame.height);
             return readUi();
         });
     }
 
     private void refresh() {
         if (mBusy) return;
-        run(() -> {
+
+        run(R.string.resolution_error, () -> {
             if (UserHandle.myUserId() == UserHandle.USER_SYSTEM) {
-                mController.engine.recover(false);
+                // Immediate-confirm operations are serialized on ResolutionController's single
+                // worker. A pending transaction observed by this later refresh is interrupted
+                // state and should be restored, not presented as a confirmation dialog.
+                mController.engine.recover(true);
             }
+            ResolutionEngine.Frame frame = mController.backend.read();
+            reconcilePartialBestEffort(frame);
             return readUi();
         });
     }
 
+    private void reconcilePartialBestEffort(ResolutionEngine.Frame frame) {
+        try {
+            mController.partialUpdate.reconcile(frame.width, frame.height);
+        } catch (Exception e) {
+            Log.w(ResolutionController.TAG,
+                    "Unable to reconcile Partial Update with the active resolution", e);
+        }
+    }
+
     private Ui readUi() throws Exception {
+        ResolutionEngine.Frame frame = mController.backend.read();
         boolean allowed;
         try {
             mController.backend.checkCanChange();
@@ -91,108 +154,70 @@ public final class ResolutionFragment extends SettingsBasePreferenceFragment {
         } catch (SecurityException | IllegalStateException e) {
             allowed = false;
         }
-        return new Ui(mController.backend.read(), mController.engine.pending(), allowed);
+        return new Ui(
+                frame,
+                mController.partialUpdate.readState(frame.width, frame.height),
+                allowed);
     }
 
-    private void run(ResolutionController.Work<Ui> work) {
+    private void run(int errorMessage, ResolutionController.Work<Ui> work) {
         mBusy = true;
         updateEnabled();
+
         mController.execute(work, (ui, error) -> {
             mBusy = false;
-            if (!isAdded() || !isResumed()) return;
-            if (error != null) {
-                Toast.makeText(requireContext(), R.string.resolution_error, Toast.LENGTH_LONG)
-                        .show();
-                // Read the post-rollback result, rather than reporting the requested option.
-                mController.execute(this::readUi, (recovered, readError) -> {
-                    if (!isAdded() || !isResumed()) return;
-                    if (recovered != null) render(recovered);
-                    else {
-                        mAllowed = false;
-                        updateEnabled();
-                    }
-                });
-            } else {
+            if (!isAdded() || getView() == null) return;
+
+            if (error == null && ui != null) {
                 render(ui);
+                return;
             }
+
+            Toast.makeText(requireContext(), errorMessage, Toast.LENGTH_LONG).show();
+            mController.execute(this::readUi, (recovered, readError) -> {
+                if (!isAdded() || getView() == null) return;
+                if (recovered != null) {
+                    render(recovered);
+                } else {
+                    mAllowed = false;
+                    mPartialAvailable = false;
+                    updateEnabled();
+                }
+            });
         });
     }
 
     private void render(Ui ui) {
         mAllowed = ui.allowed;
-        mPending = ui.pending;
+        mPartialAvailable = ui.partial.available;
+
         mFhd.setChecked(ui.frame.width == 1080 && ui.frame.height == 2400);
         mWqhd.setChecked(ui.frame.width == 1440 && ui.frame.height == 3200);
-        mFooter.setTitle(mAllowed ? R.string.resolution_footer : R.string.resolution_owner_only);
+
+        mUpdatingSwitch = true;
+        mPartialSwitch.setChecked(ui.partial.available && ui.partial.enabled);
+        mUpdatingSwitch = false;
+
         updateEnabled();
-        mHandler.removeCallbacks(mTick);
-        if (mPending == null) {
-            if (mDialog != null) mDialog.dismiss();
-            mDialog = null;
-            return;
-        }
-        if (mDialog == null) {
-            final String token = mPending.token;
-            mDialog = new AlertDialog.Builder(requireContext())
-                    .setTitle(R.string.resolution_confirm_title)
-                    .setMessage(confirmationMessage())
-                    .setPositiveButton(R.string.resolution_keep, (dialog, which) -> run(() -> {
-                        mController.engine.confirm(token);
-                        return readUi();
-                    }))
-                    .setNegativeButton(R.string.resolution_revert, (dialog, which) -> revert(token))
-                    .setOnCancelListener(dialog -> revert(token))
-                    .create();
-            mDialog.setCanceledOnTouchOutside(false);
-            mDialog.setOnDismissListener(dialog -> {
-                if (mDialog == dialog) mDialog = null;
-            });
-            mDialog.show();
-        }
-        tick();
-    }
-
-    private void revert(String token) {
-        run(() -> {
-            mController.engine.rollback(token);
-            return readUi();
-        });
-    }
-
-    private void tick() {
-        if (!isResumed() || mPending == null) return;
-        if (SystemClock.elapsedRealtime() >= mPending.deadline) {
-            refresh();
-        } else {
-            if (mDialog != null) mDialog.setMessage(confirmationMessage());
-            mHandler.postDelayed(mTick, 1000);
-        }
-    }
-
-    private String confirmationMessage() {
-        int seconds = (int) Math.max(1,
-                (mPending.deadline - SystemClock.elapsedRealtime() + 999) / 1000);
-        return getResources().getQuantityString(R.plurals.resolution_countdown, seconds, seconds);
     }
 
     private void updateEnabled() {
-        boolean enabled = mAllowed && !mBusy && mPending == null;
-        mFhd.setEnabled(enabled);
-        mWqhd.setEnabled(enabled);
-        if (mDialog != null) {
-            mDialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(!mBusy);
-            mDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(!mBusy);
+        boolean cardsEnabled = mAllowed && !mBusy;
+        if (mFhd != null) mFhd.setEnabled(cardsEnabled);
+        if (mWqhd != null) mWqhd.setEnabled(cardsEnabled);
+        if (mPartialSwitch != null) {
+            mPartialSwitch.setEnabled(mAllowed && !mBusy && mPartialAvailable);
         }
     }
 
     private static final class Ui {
         final ResolutionEngine.Frame frame;
-        final ResolutionEngine.Pending pending;
+        final PartialUpdateBackend.State partial;
         final boolean allowed;
 
-        Ui(ResolutionEngine.Frame frame, ResolutionEngine.Pending pending, boolean allowed) {
+        Ui(ResolutionEngine.Frame frame, PartialUpdateBackend.State partial, boolean allowed) {
             this.frame = frame;
-            this.pending = pending;
+            this.partial = partial;
             this.allowed = allowed;
         }
     }

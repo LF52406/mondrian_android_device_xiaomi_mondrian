@@ -1,4 +1,10 @@
-# PreferenceFragment is created by class name when restored after a density change.
+# Fragment and custom views are restored/inflated by class name.
 -keep public class org.lineageos.mondrian.display.ResolutionFragment {
     public <init>();
+}
+-keep public class org.lineageos.mondrian.display.ResolutionCardView {
+    public <init>(...);
+}
+-keep public class org.lineageos.mondrian.display.PartialUpdateDiagramView {
+    public <init>(...);
 }

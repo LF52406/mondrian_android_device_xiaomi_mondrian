@@ -1,0 +1,5 @@
+# MondrianDisplaySettings is platform-signed. Limit hardware mutation to the
+# dedicated property bridge; sysfs itself remains read-only to the app.
+get_prop(platform_app, mondrian_display_prop)
+set_prop(platform_app, mondrian_display_prop)
+allow platform_app sysfs_mondrian_partial_update:file r_file_perms;

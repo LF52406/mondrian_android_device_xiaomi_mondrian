@@ -2,19 +2,22 @@
 <!-- Copyright (C) 2026 The LineageOS Project; SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <string name="resolution_title">Screen resolution</string>
-    <string name="resolution_fhd_summary">1080 × 2400\nBalanced clarity with lower graphics workload</string>
-    <string name="resolution_wqhd_summary">1440 × 3200\nMaximum clarity</string>
-    <string name="resolution_footer">The size of text and interface elements is preserved as closely as possible. Some apps may restart when you change the resolution.</string>
-    <string name="resolution_owner_only">Only the device owner can change the screen resolution on an unlocked POCO F5 Pro.</string>
-    <string name="resolution_confirm_title">Keep this resolution?</string>
-    <string name="resolution_keep">Keep changes</string>
-    <string name="resolution_revert">Revert</string>
+    <string name="resolution_section_title">Image clarity</string>
+    <string name="resolution_fhd_title">FHD+</string>
+    <string name="resolution_fhd_pixels">1080 × 2400</string>
+    <string name="resolution_fhd_summary">Lower graphics load</string>
+    <string name="resolution_wqhd_title">WQHD+</string>
+    <string name="resolution_wqhd_pixels">1440 × 3200</string>
+    <string name="resolution_wqhd_summary">More detail</string>
+    <string name="resolution_scale_note">Text and interface elements stay at a familiar size.</string>
+    <string name="partial_update_title">Partial screen update</string>
+    <string name="partial_update_full_screen">Full screen</string>
+    <string name="partial_update_changes_only">Changes only</string>
+    <string name="partial_update_summary">Only the changed area is updated. When that isn\'t possible, the whole screen is refreshed.</string>
+    <string name="resolution_restart_note">Some apps may restart when you change the resolution.</string>
     <string name="resolution_error">Couldn\'t update the screen resolution. Try again.</string>
+    <string name="partial_update_error">Couldn\'t update partial screen refresh. Try again.</string>
     <string name="resolution_custom">Custom</string>
     <string name="resolution_current">%1$s · %2$d × %3$d</string>
-    <string name="resolution_search_keywords">screen resolution, display, FHD, WQHD, 1080p, 1440p</string>
-    <plurals name="resolution_countdown">
-        <item quantity="one">The previous resolution will be restored in %1$d second unless you keep the changes.</item>
-        <item quantity="other">The previous resolution will be restored in %1$d seconds unless you keep the changes.</item>
-    </plurals>
+    <string name="resolution_search_keywords">screen resolution, display, FHD, WQHD, 1080p, 1440p, partial update, ROI</string>
 </resources>

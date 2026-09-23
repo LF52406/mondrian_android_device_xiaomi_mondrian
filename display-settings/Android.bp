@@ -11,10 +11,21 @@ android_app {
     system_ext_specific: true,
     privileged: true,
     static_libs: ["org.lineageos.settings.resources"],
-    required: ["privapp-permissions-mondrian-display.xml"],
+    required: [
+        "init.mondrian.display.rc",
+        "privapp-permissions-mondrian-display.xml",
+    ],
     optimize: {
         proguard_flags_files: ["proguard.flags"],
     },
+}
+
+prebuilt_etc {
+    name: "init.mondrian.display.rc",
+    src: "init.mondrian.display.rc",
+    filename: "init.mondrian.display.rc",
+    sub_dir: "init",
+    system_ext_specific: true,
 }
 
 prebuilt_etc {

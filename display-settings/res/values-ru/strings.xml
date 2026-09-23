@@ -2,21 +2,22 @@
 <!-- Copyright (C) 2026 The LineageOS Project; SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <string name="resolution_title">Разрешение экрана</string>
-    <string name="resolution_fhd_summary">1080 × 2400\nСбалансированная чёткость и меньшая нагрузка на графику</string>
-    <string name="resolution_wqhd_summary">1440 × 3200\nМаксимальная чёткость</string>
-    <string name="resolution_footer">Размер текста и элементов интерфейса сохраняется максимально близким к текущему. При смене разрешения некоторые приложения могут перезапуститься.</string>
-    <string name="resolution_owner_only">Изменять разрешение может только владелец устройства на разблокированном POCO F5 Pro.</string>
-    <string name="resolution_confirm_title">Сохранить это разрешение?</string>
-    <string name="resolution_keep">Сохранить</string>
-    <string name="resolution_revert">Вернуть</string>
+    <string name="resolution_section_title">Чёткость изображения</string>
+    <string name="resolution_fhd_title">FHD+</string>
+    <string name="resolution_fhd_pixels">1080 × 2400</string>
+    <string name="resolution_fhd_summary">Меньшая нагрузка</string>
+    <string name="resolution_wqhd_title">WQHD+</string>
+    <string name="resolution_wqhd_pixels">1440 × 3200</string>
+    <string name="resolution_wqhd_summary">Больше деталей</string>
+    <string name="resolution_scale_note">Размер текста и элементов остаётся привычным.</string>
+    <string name="partial_update_title">Частичное обновление экрана</string>
+    <string name="partial_update_full_screen">Весь экран</string>
+    <string name="partial_update_changes_only">Только изменения</string>
+    <string name="partial_update_summary">Обновляется изменившаяся область. Когда это невозможно — весь экран.</string>
+    <string name="resolution_restart_note">При смене разрешения некоторые приложения могут перезапуститься.</string>
     <string name="resolution_error">Не удалось изменить разрешение экрана. Повторите попытку.</string>
+    <string name="partial_update_error">Не удалось изменить режим частичного обновления. Повторите попытку.</string>
     <string name="resolution_custom">Другое</string>
     <string name="resolution_current">%1$s · %2$d × %3$d</string>
-    <string name="resolution_search_keywords">разрешение экрана, дисплей, FHD, WQHD, 1080p, 1440p</string>
-    <plurals name="resolution_countdown">
-        <item quantity="one">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунду.</item>
-        <item quantity="few">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунды.</item>
-        <item quantity="many">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунд.</item>
-        <item quantity="other">Если не сохранить изменения, прежнее разрешение вернётся через %1$d секунды.</item>
-    </plurals>
+    <string name="resolution_search_keywords">разрешение экрана, дисплей, FHD, WQHD, 1080p, 1440p, частичное обновление, ROI</string>
 </resources>
