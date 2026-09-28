@@ -71,7 +71,7 @@ final class PartialUpdateBackend {
         }
     }
 
-    void ensureDisabledForFhd() throws Exception {
+    void ensureDisabledForTransition() throws Exception {
         int actual = readProfile();
         if (actual != PROFILE_DISABLED) {
             requestProfile(PROFILE_DISABLED);
@@ -86,14 +86,15 @@ final class PartialUpdateBackend {
             throw new IOException("M11A partial-update control is unavailable");
         }
 
-        boolean previousDesired = desiredEnabled();
+        String previousDesired = SystemProperties.get(PROP_DESIRED, "");
         try {
             setDesiredEnabled(enabled);
             requestProfile(enabled ? PROFILE_SAFE : PROFILE_DISABLED);
         } catch (Exception failure) {
             try {
-                setDesiredEnabled(previousDesired);
-                requestProfile(previousDesired ? PROFILE_SAFE : PROFILE_DISABLED);
+                SystemProperties.set(PROP_DESIRED, previousDesired);
+                requestProfile("1".equals(previousDesired)
+                        ? PROFILE_SAFE : PROFILE_DISABLED);
             } catch (Exception restoreFailure) {
                 failure.addSuppressed(restoreFailure);
             }
@@ -102,7 +103,8 @@ final class PartialUpdateBackend {
     }
 
     private boolean desiredEnabled() {
-        return !"0".equals(SystemProperties.get(PROP_DESIRED, "1"));
+        // Availability at WQHD must never imply consent to enable Partial Update.
+        return "1".equals(SystemProperties.get(PROP_DESIRED, ""));
     }
 
     private void setDesiredEnabled(boolean enabled) {

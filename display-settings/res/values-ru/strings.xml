@@ -2,6 +2,8 @@
 <!-- Copyright (C) 2026 The LineageOS Project; SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <string name="resolution_title">Разрешение экрана</string>
+    <string name="display_mode_title">Режим экрана</string>
+    <string name="display_mode_summary">Разрешение и частичное обновление</string>
     <string name="resolution_section_title">Чёткость изображения</string>
     <string name="resolution_fhd_title">FHD+</string>
     <string name="resolution_fhd_pixels">1080 × 2400</string>

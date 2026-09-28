@@ -23,6 +23,7 @@ public final class ResolutionFragment extends Fragment {
     private ResolutionCardView mFhd;
     private ResolutionCardView mWqhd;
     private Switch mPartialSwitch;
+    private PartialUpdateDiagramView mPartialDiagram;
 
     private boolean mBusy;
     private boolean mAllowed;
@@ -42,6 +43,7 @@ public final class ResolutionFragment extends Fragment {
         mFhd = view.findViewById(R.id.resolution_fhd);
         mWqhd = view.findViewById(R.id.resolution_wqhd);
         mPartialSwitch = view.findViewById(R.id.partial_update_switch);
+        mPartialDiagram = view.findViewById(R.id.partial_update_diagram);
 
         mFhd.bind(
                 getString(R.string.resolution_fhd_title),
@@ -76,11 +78,12 @@ public final class ResolutionFragment extends Fragment {
 
         run(R.string.resolution_error, () -> {
             ResolutionEngine.Frame before = mController.backend.read();
-            if (width == 1080
-                    && (before.width != 1080 || before.height != 2400)) {
-                // FHD does not support this M11A ROI path. This precondition is strict:
-                // verify the real module parameter is disabled before shrinking the logical mode.
-                mController.partialUpdate.ensureDisabledForFhd();
+            int targetHeight = width == 1080 ? 2400 : ResolutionEngine.NATIVE_HEIGHT;
+            boolean changingResolution = before.width != width
+                    || before.height != targetHeight;
+            if (changingResolution) {
+                // Every real resolution transaction starts from verified full-frame mode.
+                mController.partialUpdate.ensureDisabledForTransition();
             }
 
             try {
@@ -197,6 +200,7 @@ public final class ResolutionFragment extends Fragment {
         mUpdatingSwitch = true;
         mPartialSwitch.setChecked(ui.partial.available && ui.partial.enabled);
         mUpdatingSwitch = false;
+        mPartialDiagram.setPartialUpdateEnabled(ui.partial.enabled);
 
         updateEnabled();
     }

@@ -9,6 +9,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
+import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -16,11 +17,14 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.TextView;
 
 public final class ResolutionCardView extends LinearLayout {
+    private static final float PRESSED_SCALE = 0.988f;
+
     private final ResolutionPreviewView mPreview;
     private final RadioButton mRadio;
     private final TextView mTitle;
@@ -31,6 +35,7 @@ public final class ResolutionCardView extends LinearLayout {
     private final int mSecondary;
     private final int mSurface;
     private boolean mChecked;
+    private boolean mTouchPressed;
     private String mAccessibilityText = "";
 
     public ResolutionCardView(Context context) {
@@ -50,21 +55,19 @@ public final class ResolutionCardView extends LinearLayout {
         setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         setPadding(dp(10), dp(10), dp(10), dp(12));
-        setMinimumHeight(dp(224));
+        setMinimumHeight(dp(244));
 
         mAccent = resolveColor(android.R.attr.colorAccent, 0xff8ee8c4);
         mSecondary = resolveColor(android.R.attr.textColorSecondary, 0xff9aa0a6);
         mSurface = resolveColor(android.R.attr.colorBackgroundFloating, 0xff202124);
 
         mPreview = new ResolutionPreviewView(context);
-        addView(mPreview, new LayoutParams(
-                LayoutParams.MATCH_PARENT, dp(140)));
+        addView(mPreview, new LayoutParams(LayoutParams.MATCH_PARENT, dp(128)));
 
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(HORIZONTAL);
-        row.setGravity(Gravity.TOP);
-        LayoutParams rowParams = new LayoutParams(
-                LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LayoutParams rowParams = new LayoutParams(LayoutParams.MATCH_PARENT, dp(84));
         rowParams.topMargin = dp(10);
         addView(row, rowParams);
 
@@ -82,29 +85,40 @@ public final class ResolutionCardView extends LinearLayout {
 
         LinearLayout text = new LinearLayout(context);
         text.setOrientation(VERTICAL);
+        text.setGravity(Gravity.CENTER_VERTICAL);
         text.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        row.addView(text, new LayoutParams(
-                0, LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(text, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1f));
 
         mTitle = makeText(20, true, resolveColor(android.R.attr.textColorPrimary, Color.WHITE));
         mPixels = makeText(15, false, mSecondary);
         mSummary = makeText(15, false, mSecondary);
         mSummary.setMaxLines(2);
+        mSummary.setEllipsize(TextUtils.TruncateAt.END);
 
         text.addView(mTitle);
         text.addView(mPixels);
         text.addView(mSummary);
 
         setOnTouchListener((v, event) -> {
-            if (!isEnabled()) return false;
-            int action = event.getActionMasked();
-            if (action == MotionEvent.ACTION_DOWN) {
-                animate().cancel();
-                animate().scaleX(0.985f).scaleY(0.985f).setDuration(70).start();
-            } else if (action == MotionEvent.ACTION_UP
-                    || action == MotionEvent.ACTION_CANCEL) {
-                animate().cancel();
-                animate().scaleX(1f).scaleY(1f).setDuration(120).start();
+            if (!isEnabled()) {
+                resetPressState();
+                return false;
+            }
+
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    setTouchPressed(true);
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    setTouchPressed(event.getX() >= 0 && event.getX() <= getWidth()
+                            && event.getY() >= 0 && event.getY() <= getHeight());
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    setTouchPressed(false);
+                    break;
+                default:
+                    break;
             }
             return false;
         });
@@ -135,6 +149,18 @@ public final class ResolutionCardView extends LinearLayout {
     }
 
     @Override
+    public void setEnabled(boolean enabled) {
+        super.setEnabled(enabled);
+        if (!enabled) resetPressState();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        resetPressState();
+        super.onDetachedFromWindow();
+    }
+
+    @Override
     public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
         super.onInitializeAccessibilityNodeInfo(info);
         info.setClassName(RadioButton.class.getName());
@@ -143,6 +169,25 @@ public final class ResolutionCardView extends LinearLayout {
         info.setSelected(mChecked);
         info.setClickable(isEnabled());
         info.setContentDescription(mAccessibilityText);
+    }
+
+    private void setTouchPressed(boolean pressed) {
+        if (mTouchPressed == pressed) return;
+        mTouchPressed = pressed;
+        animate().cancel();
+        animate()
+                .scaleX(pressed ? PRESSED_SCALE : 1f)
+                .scaleY(pressed ? PRESSED_SCALE : 1f)
+                .setDuration(pressed ? 75 : 115)
+                .setInterpolator(new DecelerateInterpolator())
+                .start();
+    }
+
+    private void resetPressState() {
+        mTouchPressed = false;
+        animate().cancel();
+        setScaleX(1f);
+        setScaleY(1f);
     }
 
     private void updateBackground() {

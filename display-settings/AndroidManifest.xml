@@ -14,7 +14,7 @@
     <uses-permission android:name="android.permission.READ_SEARCH_INDEXABLES" />
 
     <application
-        android:label="@string/resolution_title"
+        android:label="@string/display_mode_title"
         android:allowBackup="false"
         android:defaultToDeviceProtectedStorage="true"
         android:directBootAware="true"
@@ -23,7 +23,7 @@
 
         <activity
             android:name=".ResolutionActivity"
-            android:label="@string/resolution_title"
+            android:label="@string/display_mode_title"
             android:exported="true"
             android:permission="android.permission.WRITE_SECURE_SETTINGS">
             <intent-filter>

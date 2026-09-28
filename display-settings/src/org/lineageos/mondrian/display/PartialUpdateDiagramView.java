@@ -13,10 +13,13 @@ import android.util.TypedValue;
 import android.view.View;
 
 public final class PartialUpdateDiagramView extends View {
+    private static final int MINT = 0xff8ee8c4;
+
     private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final int mAccent;
     private final int mSecondary;
     private final int mPrimary;
+    private boolean mPartialUpdateEnabled;
 
     public PartialUpdateDiagramView(Context context) {
         this(context, null);
@@ -28,12 +31,18 @@ public final class PartialUpdateDiagramView extends View {
 
     public PartialUpdateDiagramView(Context context, AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
-        mAccent = resolveColor(android.R.attr.colorAccent, 0xff8ee8c4);
+        mAccent = resolveColor(android.R.attr.colorAccent, MINT);
         mSecondary = resolveColor(android.R.attr.textColorSecondary, 0xff9aa0a6);
         mPrimary = resolveColor(android.R.attr.textColorPrimary, Color.WHITE);
         setClickable(false);
         setFocusable(false);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+    }
+
+    public void setPartialUpdateEnabled(boolean enabled) {
+        if (mPartialUpdateEnabled == enabled) return;
+        mPartialUpdateEnabled = enabled;
+        invalidate();
     }
 
     @Override
@@ -50,8 +59,10 @@ public final class PartialUpdateDiagramView extends View {
         float rightX = w * 0.60f;
         float radius = dp(18);
 
-        drawPhone(canvas, new RectF(leftX, top, leftX + phoneW, top + phoneH), true, radius);
-        drawPhone(canvas, new RectF(rightX, top, rightX + phoneW, top + phoneH), false, radius);
+        drawPhone(canvas, new RectF(leftX, top, leftX + phoneW, top + phoneH),
+                true, !mPartialUpdateEnabled, radius);
+        drawPhone(canvas, new RectF(rightX, top, rightX + phoneW, top + phoneH),
+                false, mPartialUpdateEnabled, radius);
 
         float cy = top + phoneH * 0.52f;
         float x1 = leftX + phoneW + w * 0.055f;
@@ -66,83 +77,74 @@ public final class PartialUpdateDiagramView extends View {
         mPaint.setStrokeCap(Paint.Cap.BUTT);
     }
 
-    private void drawPhone(Canvas canvas, RectF phone, boolean full, float radius) {
+    private void drawPhone(Canvas canvas, RectF phone, boolean full,
+            boolean selected, float radius) {
         mPaint.setStyle(Paint.Style.FILL);
         mPaint.setColor(withAlpha(mSecondary, 22));
         canvas.drawRoundRect(phone, radius, radius, mPaint);
 
         mPaint.setStyle(Paint.Style.STROKE);
         mPaint.setStrokeWidth(dp(2));
-        mPaint.setColor(full ? mAccent : withAlpha(mSecondary, 190));
+        mPaint.setColor(selected ? mAccent : withAlpha(mSecondary, 190));
         canvas.drawRoundRect(phone, radius, radius, mPaint);
 
         float pad = phone.width() * 0.10f;
-        RectF inner = new RectF(
-                phone.left + pad,
-                phone.top + pad,
-                phone.right - pad,
-                phone.bottom - pad);
+        RectF inner = new RectF(phone.left + pad, phone.top + pad,
+                phone.right - pad, phone.bottom - pad);
 
         mPaint.setStyle(Paint.Style.FILL);
-        mPaint.setColor(full ? withAlpha(mAccent, 76) : withAlpha(mSecondary, 48));
+        mPaint.setColor(full
+                ? withAlpha(MINT, selected ? 86 : 42)
+                : withAlpha(mSecondary, 48));
         canvas.drawRoundRect(inner, dp(10), dp(10), mPaint);
 
         float dot = phone.width() * 0.065f;
         float headerY = inner.top + inner.height() * 0.12f;
-        mPaint.setColor(full ? withAlpha(mAccent, 145) : withAlpha(mSecondary, 150));
+        mPaint.setColor(full
+                ? withAlpha(MINT, selected ? 165 : 100)
+                : withAlpha(mSecondary, 150));
         canvas.drawCircle(inner.left + dot, headerY, dot, mPaint);
-        canvas.drawRoundRect(
-                inner.left + dot * 2.7f,
-                headerY - dot * 0.55f,
-                inner.right - dot,
-                headerY + dot * 0.55f,
-                dot,
-                dot,
-                mPaint);
+        canvas.drawRoundRect(inner.left + dot * 2.7f, headerY - dot * 0.55f,
+                inner.right - dot, headerY + dot * 0.55f, dot, dot, mPaint);
 
-        RectF card = new RectF(
-                inner.left,
-                inner.top + inner.height() * 0.27f,
-                inner.right,
-                inner.top + inner.height() * 0.70f);
-        mPaint.setColor(full ? withAlpha(mAccent, 88) : withAlpha(mSecondary, 65));
+        RectF card = new RectF(inner.left, inner.top + inner.height() * 0.27f,
+                inner.right, inner.top + inner.height() * 0.70f);
+        mPaint.setColor(full
+                ? withAlpha(MINT, selected ? 100 : 48)
+                : withAlpha(mSecondary, 65));
         canvas.drawRoundRect(card, dp(8), dp(8), mPaint);
 
         if (!full) {
-            RectF changed = new RectF(
-                    card.left,
-                    card.top,
-                    card.left + card.width() * 0.52f,
-                    card.bottom);
-            mPaint.setColor(withAlpha(mAccent, 128));
+            RectF changed = new RectF(card.left, card.top,
+                    card.left + card.width() * 0.52f, card.bottom);
+            mPaint.setColor(withAlpha(MINT, selected ? 150 : 105));
             canvas.drawRect(changed, mPaint);
             mPaint.setStyle(Paint.Style.STROKE);
             mPaint.setStrokeWidth(dp(1.5f));
-            mPaint.setColor(mAccent);
+            mPaint.setColor(selected ? mAccent : withAlpha(MINT, 210));
             canvas.drawRect(changed, mPaint);
             mPaint.setStyle(Paint.Style.FILL);
         }
 
-        mPaint.setColor(full ? withAlpha(mAccent, 170) : withAlpha(mSecondary, 165));
+        int lineColor = full
+                ? withAlpha(MINT, selected ? 195 : 120)
+                : (selected ? withAlpha(MINT, 185) : withAlpha(mSecondary, 165));
+        mPaint.setColor(lineColor);
         float lineY = card.top + card.height() * 0.43f;
         for (int i = 0; i < 3; i++) {
             float width = card.width() * (i == 0 ? 0.72f : i == 1 ? 0.58f : 0.44f);
-            canvas.drawRoundRect(
-                    card.left + card.width() * 0.14f,
+            canvas.drawRoundRect(card.left + card.width() * 0.14f,
                     lineY + i * dp(8),
                     card.left + card.width() * 0.14f + width,
-                    lineY + i * dp(8) + dp(4),
-                    dp(2),
-                    dp(2),
-                    mPaint);
+                    lineY + i * dp(8) + dp(4), dp(2), dp(2), mPaint);
         }
 
-        RectF footer = new RectF(
-                inner.left,
+        RectF footer = new RectF(inner.left,
                 inner.bottom - inner.height() * 0.16f,
-                inner.right,
-                inner.bottom - inner.height() * 0.05f);
-        mPaint.setColor(full ? withAlpha(mAccent, 115) : withAlpha(mSecondary, 115));
+                inner.right, inner.bottom - inner.height() * 0.05f);
+        mPaint.setColor(full
+                ? withAlpha(MINT, selected ? 130 : 70)
+                : withAlpha(mSecondary, 115));
         canvas.drawRoundRect(footer, dp(8), dp(8), mPaint);
     }
 
