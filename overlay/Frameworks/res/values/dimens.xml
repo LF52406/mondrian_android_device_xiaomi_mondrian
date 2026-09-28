@@ -18,6 +18,11 @@
          -->
     <dimen name="status_bar_height_landscape">28dp</dimen>
 
+    <!-- UI surface geometry. These are visual interface corners, not physical display corners. -->
+    <dimen name="dialog_corner_radius">20dp</dimen>
+    <dimen name="config_dialogCornerRadius">24dp</dimen>
+    <dimen name="config_bottomDialogCornerRadius">20dp</dimen>
+
     <!-- Radius of the software rounded corners at the top of the display in its natural
         orientation. If zero, the value of rounded_corner_radius is used. -->
     <dimen name="rounded_corner_radius_top">120.0px</dimen>
