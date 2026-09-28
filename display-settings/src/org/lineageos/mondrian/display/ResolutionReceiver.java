@@ -8,7 +8,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.UserHandle;
 
-/** Cold-process and direct-boot recovery; confirmed WM settings need no boot reapplication. */
 public final class ResolutionReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -22,6 +21,7 @@ public final class ResolutionReceiver extends BroadcastReceiver {
                 || Intent.ACTION_USER_SWITCHED.equals(action)
                 || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action);
         if (!alarm && !added && !recovery) return;
+
         PendingResult result = goAsync();
         ResolutionController controller = ResolutionController.get(context);
         controller.execute(() -> {
@@ -31,8 +31,11 @@ public final class ResolutionReceiver extends BroadcastReceiver {
                         intent.getIntExtra(Intent.EXTRA_USER_HANDLE, UserHandle.USER_NULL));
             }
             if (recovery && controller.engine.pending() == null) {
-                // Covers first start of a user created while this app's process was absent.
                 controller.backend.initializeUntrackedUsers(controller.engine.knownUsers());
+            }
+            if (controller.engine.pending() == null) {
+                ResolutionEngine.Frame frame = controller.backend.read();
+                controller.partialUpdate.reconcile(frame.width, frame.height);
             }
             return null;
         }, (unused, error) -> result.finish());

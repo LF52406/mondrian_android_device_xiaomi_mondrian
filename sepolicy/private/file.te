@@ -1,0 +1,2 @@
+# Mondrian M11A partial-update runtime state
+type sysfs_mondrian_partial_update, fs_type, sysfs_type;

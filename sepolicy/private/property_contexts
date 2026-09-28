@@ -1,0 +1,3 @@
+# Mondrian display controls
+persist.sys.mondrian.partial_update_enabled u:object_r:mondrian_display_prop:s0
+sys.mondrian.partial_update_profile         u:object_r:mondrian_display_prop:s0

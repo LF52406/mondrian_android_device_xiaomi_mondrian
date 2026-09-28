@@ -1,0 +1,2 @@
+# init is the only writer of the root-owned msm_drm partial-update parameter.
+allow init sysfs_mondrian_partial_update:file w_file_perms;

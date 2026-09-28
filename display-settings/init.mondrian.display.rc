@@ -1,0 +1,17 @@
+# Copyright (C) 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+#
+# The app writes a tightly-scoped system property. init remains the only process
+# that mutates the root-owned msm_drm module parameter.
+
+on property:persist.sys.mondrian.partial_update_enabled=0
+    write /sys/module/msm_drm/parameters/m11a_partial_update_profile 0
+
+on property:persist.sys.mondrian.partial_update_enabled=1
+    write /sys/module/msm_drm/parameters/m11a_partial_update_profile 1
+
+on property:sys.mondrian.partial_update_profile=0
+    write /sys/module/msm_drm/parameters/m11a_partial_update_profile 0
+
+on property:sys.mondrian.partial_update_profile=1
+    write /sys/module/msm_drm/parameters/m11a_partial_update_profile 1
