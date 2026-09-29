@@ -34,6 +34,26 @@ remains dormant without its device opt-in. It is not automatically reversed.
 Unknown framework revisions may need an adapter; arbitrary ROM compatibility is
 not guaranteed by the package name alone.
 
+## Interface references
+
+The interface follows the approved `651.png` main screen and `642.png` profile
+screen: a compact central waveform on the main page, a wider multi-peak waveform
+on the profile page, separate profile artwork in rounded tiles, outlined selection
+and the checked switch thumb. The preview buttons use the corresponding artwork
+and proportions from each screen.
+
+The continuous 0–100 slider has eight visual guide dots, a rounded track and a
+large circular thumb. The dots do not quantize its value. The switch retains
+Android's native dragging, thumb animation, keyboard and accessibility behavior.
+Typography, card spacing and corner sizes follow the references in density-aware
+units; text can wrap at larger font sizes. Profile icons compact on narrow screens
+or larger font scales to preserve text space. Colors come from Monet in both
+light and dark themes; the reference's lavender is not hardcoded.
+
+The updated UI resources link with AAPT2, and all current settings Java sources
+compile against Android 17 classes. An actual installed-screen comparison on
+mondrian remains pending; no rendered device screenshot is claimed.
+
 ## Behavior
 
 - The engine is initially OFF. Turning it on starts with Balanced at 60%.

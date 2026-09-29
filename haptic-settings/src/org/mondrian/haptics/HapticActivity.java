@@ -31,7 +31,6 @@ import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.window.OnBackInvokedDispatcher;
@@ -46,11 +45,12 @@ public final class HapticActivity extends Activity implements SettingsStore.List
     private final List<View> mPreviews = new ArrayList<>();
     private final List<LinearLayout> mProfileCards = new ArrayList<>();
     private final List<RadioButton> mProfileRadios = new ArrayList<>();
+    private final List<HapticWaveView> mProfileIcons = new ArrayList<>();
     private SettingsStore mStore;
     private HapticEngineConfig mConfig = HapticEngineConfig.DEFAULT;
     private LinearLayout mRoot;
     private TextView mValue, mProfileValue, mEnableSummary;
-    private Switch mSwitch;
+    private HapticSwitch mSwitch;
     private HapticSlider mSlider;
     private View mStrengthCard, mCharacterCard;
     private boolean mProfiles, mBinding, mDragging, mSavePending;
@@ -145,7 +145,7 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         mSecondary = getColor(night ? android.R.color.system_neutral2_200
                 : android.R.color.system_neutral2_600);
         mSurface = mix(mBackground, mPrimary, night ? .085f : .065f);
-        mTonal = mix(mSurface, mPrimary, night ? .16f : .13f);
+        mTonal = mix(mSurface, mPrimary, night ? .10f : .11f);
         mThumb = night ? getColor(android.R.color.system_accent1_10) : Color.WHITE;
         getWindow().setDecorFitsSystemWindows(false);
         getWindow().setStatusBarColor(Color.TRANSPARENT);
@@ -159,6 +159,7 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         mPreviews.clear();
         mProfileCards.clear();
         mProfileRadios.clear();
+        mProfileIcons.clear();
         mSwitch = null;
         mSlider = null;
         mEnableSummary = null;
@@ -175,7 +176,8 @@ public final class HapticActivity extends Activity implements SettingsStore.List
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
             return insets;
         });
-        mRoot = column(16);
+        mRoot = column(14);
+        mRoot.setPadding(dp(14), dp(8), dp(14), dp(8));
         scroll.addView(mRoot, new ScrollView.LayoutParams(-1, -2));
         setContentView(scroll);
         LinearLayout top = row();
@@ -185,14 +187,19 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         back.setOnClickListener(v -> goBack());
         top.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
         mRoot.addView(top);
-        TextView title = text(getString(mProfiles ? R.string.character : R.string.app_name), 32, true);
+        TextView title = text(getString(mProfiles ? R.string.character : R.string.app_name), 34, true);
+        title.setPaddingRelative(dp(8), 0, dp(8), 0);
         title.setAccessibilityHeading(true);
-        add(mRoot, title, 12);
-        add(mRoot, secondary(mProfiles ? R.string.character_hint : R.string.subtitle), 6);
-        Wave wave = new Wave(11);
-        LinearLayout.LayoutParams waveParams = new LinearLayout.LayoutParams(-1, dp(mProfiles ? 92 : 114));
-        waveParams.topMargin = dp(12);
-        waveParams.bottomMargin = dp(10);
+        add(mRoot, title, 8);
+        TextView subtitle = secondary(mProfiles ? R.string.character_hint : R.string.subtitle);
+        subtitle.setTextSize(16);
+        subtitle.setPaddingRelative(dp(8), 0, dp(8), 0);
+        add(mRoot, subtitle, 6);
+        HapticWaveView wave = new HapticWaveView(this, mProfiles
+                ? HapticWaveView.Shape.PROFILE_HERO : HapticWaveView.Shape.HERO, mPrimary);
+        LinearLayout.LayoutParams waveParams = new LinearLayout.LayoutParams(-1, dp(mProfiles ? 128 : 108));
+        waveParams.topMargin = dp(mProfiles ? 12 : 6);
+        waveParams.bottomMargin = dp(mProfiles ? 0 : 16);
         mRoot.addView(wave, waveParams);
         if (mProfiles) buildProfiles(); else buildMain();
         bind();
@@ -206,10 +213,7 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         mEnableSummary = secondary(R.string.enable_summary);
         add(labels, mEnableSummary, 6);
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
-        mSwitch = new Switch(this);
-        mSwitch.setShowText(false);
-        mSwitch.setTrackTintList(tint(mPrimary, mTonal));
-        mSwitch.setThumbTintList(tint(mOnPrimary, mSecondary));
+        mSwitch = new HapticSwitch(this, mPrimary, mTonal, mOnPrimary, mSecondary, mText);
         mSwitch.setContentDescription(getString(R.string.enable));
         mSwitch.setOnCheckedChangeListener((button, checked) -> {
             if (mBinding) return;
@@ -217,10 +221,11 @@ public final class HapticActivity extends Activity implements SettingsStore.List
             bind();
             mStore.save(mConfig, 0);
         });
-        LinearLayout.LayoutParams switchParams = new LinearLayout.LayoutParams(dp(64), dp(48));
+        LinearLayout.LayoutParams switchParams = new LinearLayout.LayoutParams(dp(60), dp(48));
         switchParams.setMarginStart(dp(12));
         row.addView(mSwitch, switchParams);
         enable.addView(row);
+        enable.setMinimumHeight(dp(76));
         add(mRoot, enable, 0);
 
         LinearLayout strength = card();
@@ -228,7 +233,7 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         LinearLayout heading = row();
         heading.addView(text(getString(R.string.strength), 18, true),
                 new LinearLayout.LayoutParams(0, -2, 1));
-        mValue = text(percent(mConfig.strength), 20, true);
+        mValue = text(percent(mConfig.strength), 18, true);
         mValue.setTextColor(mPrimary);
         heading.addView(mValue);
         strength.addView(heading);
@@ -250,18 +255,21 @@ public final class HapticActivity extends Activity implements SettingsStore.List
                 flushStrength();
             }
         });
-        add(strength, mSlider, 14);
+        add(strength, mSlider, 10);
         LinearLayout ends = row();
         ends.addView(secondary(R.string.weaker), new LinearLayout.LayoutParams(0, -2, 1));
         ends.addView(secondary(R.string.stronger));
-        add(strength, ends, 6);
-        add(strength, secondary(R.string.strength_hint), 18);
+        add(strength, ends, 0);
+        TextView hint = secondary(R.string.strength_hint);
+        hint.setTextSize(14);
+        add(strength, hint, 12);
         add(mRoot, strength, 12);
 
         LinearLayout character = card();
         mCharacterCard = character;
         LinearLayout content = row();
-        content.addView(new Wave(5), new LinearLayout.LayoutParams(dp(38), dp(44)));
+        content.addView(new HapticWaveView(this, HapticWaveView.Shape.BALANCED, mPrimary),
+                new LinearLayout.LayoutParams(dp(40), dp(44)));
         LinearLayout labelsProfile = column(0);
         labelsProfile.addView(text(getString(R.string.character), 18, true));
         mProfileValue = secondary(profileName(mConfig.profile));
@@ -273,6 +281,7 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         chevron.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, new Arrow(true), null);
         content.addView(chevron, new LinearLayout.LayoutParams(dp(24), dp(32)));
         character.addView(content);
+        character.setMinimumHeight(dp(76));
         character.setOnClickListener(v -> { flushStrength(); mProfiles = true; render(); });
         asButton(character, getString(R.string.character));
         add(mRoot, character, 12);
@@ -289,29 +298,47 @@ public final class HapticActivity extends Activity implements SettingsStore.List
                     bind();
                     mStore.save(mConfig, 0);
                 }).show());
-        LinearLayout.LayoutParams resetParams = new LinearLayout.LayoutParams(-1, dp(56));
-        resetParams.topMargin = dp(12);
+        LinearLayout.LayoutParams resetParams = new LinearLayout.LayoutParams(-1, dp(48));
+        resetParams.topMargin = dp(10);
         mRoot.addView(reset, resetParams);
     }
 
     private void buildProfiles() {
         int[] summaries = {R.string.soft_summary, R.string.balanced_summary, R.string.crisp_summary};
+        HapticWaveView.Shape[] shapes = {HapticWaveView.Shape.SOFT,
+                HapticWaveView.Shape.BALANCED, HapticWaveView.Shape.CRISP};
+        Configuration configuration = getResources().getConfiguration();
+        int iconSize = dp(configuration.screenWidthDp < 380 || configuration.fontScale > 1.2f
+                ? 52 : 66);
         for (int i = 0; i < 3; i++) {
             final int profile = i;
             LinearLayout card = card();
+            card.setPadding(dp(14), dp(14), dp(14), dp(14));
             LinearLayout row = row();
+            HapticWaveView icon = new HapticWaveView(this, shapes[i], mSecondary);
+            icon.setBackground(surface(mTonal, false, 14));
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(iconSize, iconSize);
+            iconParams.setMarginEnd(dp(16));
+            row.addView(icon, iconParams);
             LinearLayout labels = column(0);
-            labels.addView(text(getString(profileName(profile)), 20, true));
-            add(labels, secondary(summaries[profile]), 8);
+            labels.addView(text(getString(profileName(profile)), 18, true));
+            add(labels, secondary(summaries[profile]), 6);
             row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
             RadioButton radio = new RadioButton(this);
-            radio.setButtonTintList(ColorStateList.valueOf(mPrimary));
+            radio.setButtonTintList(null);
+            radio.setButtonDrawable(new RadioMark());
+            radio.setBackground(null);
+            radio.setPadding(0, 0, 0, 0);
+            radio.setGravity(Gravity.CENTER_VERTICAL);
             radio.setClickable(false);
             radio.setFocusable(false);
             radio.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            row.addView(radio, new LinearLayout.LayoutParams(dp(48), dp(48)));
+            LinearLayout.LayoutParams radioParams = new LinearLayout.LayoutParams(dp(28), dp(48));
+            radioParams.setMarginStart(dp(12));
+            row.addView(radio, radioParams);
             card.addView(row);
             card.setMinimumHeight(dp(96));
+            card.setFocusable(true);
             card.setContentDescription(getString(profileName(profile)) + ". " + getString(summaries[profile]));
             card.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
             row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
@@ -330,18 +357,20 @@ public final class HapticActivity extends Activity implements SettingsStore.List
             });
             mProfileCards.add(card);
             mProfileRadios.add(radio);
-            add(mRoot, card, i == 0 ? 0 : 12);
+            mProfileIcons.add(icon);
+            add(mRoot, card, i == 0 ? 0 : 10);
         }
-        add(mRoot, previewCard(true), 20);
+        add(mRoot, previewCard(true), 16);
         TextView footer = secondary(R.string.applies_immediately);
         footer.setGravity(Gravity.CENTER);
-        add(mRoot, footer, 24);
+        footer.setTextSize(13);
+        add(mRoot, footer, 20);
     }
 
     private LinearLayout previewCard(boolean profiles) {
         LinearLayout card = card();
-        card.addView(text(getString(profiles ? R.string.compare : R.string.try_feedback), 20, true));
-        add(card, secondary(profiles ? R.string.compare_hint : R.string.try_hint), 6);
+        card.addView(text(getString(profiles ? R.string.compare : R.string.try_feedback), 18, true));
+        add(card, secondary(profiles ? R.string.compare_hint : R.string.try_hint), 4);
         LinearLayout row = row();
         row.setGravity(Gravity.CENTER);
         int[] labels = {R.string.click, R.string.double_click, R.string.steps};
@@ -351,14 +380,17 @@ public final class HapticActivity extends Activity implements SettingsStore.List
             final int effect = effects[i];
             LinearLayout button = column(10);
             button.setGravity(Gravity.CENTER);
-            button.setMinimumHeight(dp(84));
-            button.setBackground(surface(mTonal, false));
-            button.addView(new Wave(i == 0 ? 1 : i == 1 ? 2 : 5),
-                    new LinearLayout.LayoutParams(dp(36), dp(30)));
+            button.setMinimumHeight(dp(profiles ? 94 : 70));
+            button.setBackground(surface(mTonal, false, 18));
+            HapticWaveView.Shape shape = i == 0 ? HapticWaveView.Shape.CLICK
+                    : i == 1 ? (profiles ? HapticWaveView.Shape.DOUBLE : HapticWaveView.Shape.DOUBLE_EVEN)
+                    : (profiles ? HapticWaveView.Shape.STEPS : HapticWaveView.Shape.BALANCED);
+            button.addView(new HapticWaveView(this, shape, mPrimary),
+                    new LinearLayout.LayoutParams(dp(48), dp(profiles ? 40 : 28)));
             TextView label = text(getString(labels[i]), 14, true);
-            label.setTextColor(mPrimary);
+            label.setTextColor(profiles ? mText : mPrimary);
             label.setGravity(Gravity.CENTER);
-            add(button, label, 8);
+            add(button, label, profiles ? 8 : 6);
             button.setOnClickListener(v -> preview(effect));
             asButton(button, getString(R.string.preview_description, getString(labels[i])));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1);
@@ -366,7 +398,7 @@ public final class HapticActivity extends Activity implements SettingsStore.List
             row.addView(button, params);
             mPreviews.add(button);
         }
-        add(card, row, 16);
+        add(card, row, 10);
         return card;
     }
 
@@ -396,6 +428,9 @@ public final class HapticActivity extends Activity implements SettingsStore.List
             mProfileCards.get(i).setEnabled(enabled);
             mProfileCards.get(i).setAlpha(enabled ? 1f : .45f);
             mProfileRadios.get(i).setChecked(selected);
+            mProfileIcons.get(i).setTint(selected ? mPrimary : mSecondary);
+            mProfileIcons.get(i).setBackground(surface(
+                    selected ? mix(mTonal, mPrimary, .07f) : mTonal, false, 14));
         }
         for (View preview : mPreviews) {
             boolean active = enabled && mSystemAllowed && !mInputRedirected && mConfig.strength > 0;
@@ -440,12 +475,12 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         view.setText(text);
         view.setTextSize(size);
         view.setTextColor(mText);
-        view.setTypeface(Typeface.create(medium ? "sans-serif-medium" : "sans-serif", Typeface.NORMAL));
+        view.setTypeface(Typeface.create(Typeface.DEFAULT, medium ? 600 : 400, false));
         view.setIncludeFontPadding(false);
         return view;
     }
     private TextView secondary(int resource) {
-        TextView view = text(getString(resource), 14, false);
+        TextView view = text(getString(resource), 15, false);
         view.setTextColor(mSecondary);
         return view;
     }
@@ -461,7 +496,7 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         return layout;
     }
     private LinearLayout card() {
-        LinearLayout card = column(18);
+        LinearLayout card = column(16);
         card.setBackground(surface(mSurface, false));
         return card;
     }
@@ -477,18 +512,19 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         return button;
     }
     private Drawable surface(int color, boolean selected) {
-        GradientDrawable fill = new GradientDrawable();
-        fill.setColor(color);
-        fill.setCornerRadius(dp(24));
+        return surface(color, selected, 20);
+    }
+    private Drawable surface(int color, boolean selected, int radius) {
+        GradientDrawable fill = color == Color.TRANSPARENT ? new GradientDrawable()
+                : new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                        new int[]{mix(color, mPrimary, .025f), color});
+        if (color == Color.TRANSPARENT) fill.setColor(color);
+        fill.setCornerRadius(dp(radius));
         if (selected) fill.setStroke(dp(1), mPrimary);
         GradientDrawable mask = new GradientDrawable();
         mask.setColor(Color.WHITE);
-        mask.setCornerRadius(dp(24));
+        mask.setCornerRadius(dp(radius));
         return new RippleDrawable(ColorStateList.valueOf((mPrimary & 0xffffff) | 0x26000000), fill, mask);
-    }
-    private ColorStateList tint(int checked, int unchecked) {
-        return new ColorStateList(new int[][]{{android.R.attr.state_checked}, {}},
-                new int[]{checked, unchecked});
     }
     private void add(LinearLayout parent, View child, int topMargin) {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
@@ -516,31 +552,31 @@ public final class HapticActivity extends Activity implements SettingsStore.List
                 Math.round(Color.blue(a) * (1 - fraction) + Color.blue(b) * fraction));
     }
 
-    private final class Wave extends View {
+    private final class RadioMark extends Drawable {
         private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final int mBars;
-        Wave(int bars) {
-            super(HapticActivity.this);
-            mBars = bars;
-            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-        }
-        @Override protected void onDraw(Canvas canvas) {
-            float width = Math.min(getWidth() * .72f, dp(mBars > 5 ? 220 : 32));
-            float spacing = width / Math.max(1, mBars);
-            float barWidth = Math.min(dp(mBars > 5 ? 10 : 3), spacing * .48f);
-            float maxHeight = getHeight() * .78f;
-            mPaint.setStrokeWidth(barWidth);
-            mPaint.setStrokeCap(Paint.Cap.ROUND);
-            for (int i = 0; i < mBars; i++) {
-                float distance = Math.abs(i - (mBars - 1) / 2f) / Math.max(1, mBars / 2f);
-                float height = maxHeight * (1 - distance * .85f);
-                float x = getWidth() / 2f + (i - (mBars - 1) / 2f) * spacing;
-                mPaint.setColor(mPrimary);
-                mPaint.setAlpha(Math.round(255 - distance * 145));
-                canvas.drawLine(x, getHeight() / 2f - height / 2,
-                        x, getHeight() / 2f + height / 2, mPaint);
+        @Override public int getIntrinsicWidth() { return dp(28); }
+        @Override public int getIntrinsicHeight() { return dp(28); }
+        @Override public boolean isStateful() { return true; }
+        @Override protected boolean onStateChange(int[] state) { invalidateSelf(); return true; }
+        @Override public void draw(Canvas canvas) {
+            boolean checked = false;
+            for (int state : getState()) checked |= state == android.R.attr.state_checked;
+            float x = getBounds().exactCenterX(), y = getBounds().exactCenterY();
+            mPaint.setColor(checked ? mPrimary : mSecondary);
+            mPaint.setStyle(Paint.Style.STROKE);
+            mPaint.setStrokeWidth(dp(1.5f));
+            canvas.drawCircle(x, y, dp(12), mPaint);
+            if (checked) {
+                mPaint.setStyle(Paint.Style.FILL);
+                canvas.drawCircle(x, y, dp(6), mPaint);
             }
         }
+        @Override public void setAlpha(int alpha) { mPaint.setAlpha(alpha); invalidateSelf(); }
+        @Override public void setColorFilter(android.graphics.ColorFilter filter) {
+            mPaint.setColorFilter(filter);
+            invalidateSelf();
+        }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
 
     private final class Arrow extends Drawable {
