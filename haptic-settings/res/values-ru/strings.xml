@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="menu_summary">Тактильный отклик, сила и профили</string>
+    <string name="subtitle">Тактильный отклик</string>
+    <string name="enable">Включить Haptic Engine</string>
+    <string name="enable_summary">Отклик для системных действий</string>
+    <string name="strength">Сила отклика</string>
+    <string name="weaker">Слабее</string>
+    <string name="stronger">Сильнее</string>
+    <string name="strength_hint">Почувствуйте изменение при настройке</string>
+    <string name="character">Характер отклика</string>
+    <string name="character_hint">Выберите ощущение от каждого касания</string>
+    <string name="soft">Мягкий</string>
+    <string name="soft_summary">Лёгкий и деликатный</string>
+    <string name="balanced">Сбалансированный</string>
+    <string name="balanced_summary">Комфортный отклик на каждый день</string>
+    <string name="crisp">Чёткий</string>
+    <string name="crisp_summary">Короткий и выраженный</string>
+    <string name="try_feedback">Попробуйте отклик</string>
+    <string name="try_hint">Нажмите, чтобы почувствовать эффект</string>
+    <string name="compare">Сравните ощущения</string>
+    <string name="compare_hint">Выберите эффект для проверки</string>
+    <string name="click">Щелчок</string>
+    <string name="double_click">Двойной</string>
+    <string name="steps">Шаги</string>
+    <string name="preview_description">Проверить: %1$s</string>
+    <string name="reset">Сбросить настройки</string>
+    <string name="reset_message">Выключить Haptic Engine и вернуть профиль «Сбалансированный» с силой %1$d%%?</string>
+    <string name="cancel">Отмена</string>
+    <string name="back">Назад</string>
+    <string name="applies_immediately">Изменения применяются сразу</string>
+    <string name="system_off">Системный тактильный отклик отключён</string>
+    <string name="input_redirected">Отклик перенаправлен на устройства ввода</string>
+    <string name="unavailable">Haptic Engine недоступен в этой сборке</string>
+    <string name="save_failed">Не удалось сохранить настройку. Попробуйте ещё раз.</string>
+</resources>
