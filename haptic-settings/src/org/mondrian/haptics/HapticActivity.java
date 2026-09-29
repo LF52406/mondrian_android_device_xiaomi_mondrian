@@ -92,12 +92,18 @@ public final class HapticActivity extends Activity implements SettingsStore.List
 
     @Override protected void onResume() {
         super.onResume();
-        if (mStore != null) mStore.start(this);
+        if (mStore != null) {
+            mReady = false;
+            bind();
+            mStore.start(this);
+        }
     }
 
     @Override protected void onPause() {
         if (mStore != null) {
             flushStrength();
+            mDragging = false;
+            mReady = false;
             mStore.stop();
         }
         super.onPause();
@@ -128,6 +134,11 @@ public final class HapticActivity extends Activity implements SettingsStore.List
     }
 
     @Override public void onError() {
+        mMain.removeCallbacks(mSaveStrength);
+        mSavePending = false;
+        mDragging = false;
+        mReady = false;
+        bind();
         Toast.makeText(this, R.string.save_failed, Toast.LENGTH_LONG).show();
     }
 
@@ -391,7 +402,7 @@ public final class HapticActivity extends Activity implements SettingsStore.List
             label.setTextColor(profiles ? mText : mPrimary);
             label.setGravity(Gravity.CENTER);
             add(button, label, profiles ? 8 : 6);
-            button.setOnClickListener(v -> preview(effect));
+            button.setOnClickListener(v -> requestPreview(effect));
             asButton(button, getString(R.string.preview_description, getString(labels[i])));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1);
             if (i != 0) params.setMarginStart(dp(6));
@@ -438,6 +449,17 @@ public final class HapticActivity extends Activity implements SettingsStore.List
             preview.setAlpha(active ? 1f : .45f);
         }
         mBinding = false;
+    }
+
+    private void requestPreview(int effect) {
+        if (!mReady) return;
+        if (mSavePending) {
+            mMain.removeCallbacks(mSaveStrength);
+            mSavePending = false;
+            mStore.save(mConfig, effect);
+        } else {
+            mStore.previewAfterWrites(effect);
+        }
     }
 
     private void preview(int effect) {

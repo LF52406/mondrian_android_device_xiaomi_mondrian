@@ -90,7 +90,7 @@ final class SettingsStore implements AutoCloseable {
                         mListener.onState(config, allowed, redirected);
                     }
                 });
-            } catch (RuntimeException e) { reportError(generation); }
+            } catch (RuntimeException e) { reportError(generation, false); }
         });
     }
 
@@ -101,19 +101,33 @@ final class SettingsStore implements AutoCloseable {
             try {
                 if (!Settings.Secure.putString(mResolver, HapticEngineConfig.SETTINGS_KEY,
                         config.toString())) {
-                    reportError(generation);
+                    reportError(generation, true);
                     return;
                 }
                 mMain.post(() -> {
                     if (mListener != null && generation == mGeneration) mListener.onSaved(preview);
                 });
-            } catch (RuntimeException e) { reportError(generation); }
+            } catch (RuntimeException e) { reportError(generation, true); }
         });
     }
 
-    private void reportError(int generation) {
+    /** Wait for this process's queued writes without rewriting a possibly stale UI snapshot. */
+    void previewAfterWrites(int preview) {
+        if (mClosed) return;
+        int generation = mGeneration;
+        IO.execute(() -> mMain.post(() -> {
+            if (mListener != null && generation == mGeneration) mListener.onSaved(preview);
+        }));
+    }
+
+    private void reportError(int generation, boolean reload) {
         mMain.post(() -> {
-            if (mListener != null && generation == mGeneration) mListener.onError();
+            if (mListener != null && generation == mGeneration) {
+                // Invalidate pending previews and refresh once after a failed write.
+                ++mGeneration;
+                mListener.onError();
+                if (reload) refresh();
+            }
         });
     }
 

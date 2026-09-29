@@ -81,6 +81,10 @@ mondrian remains pending; no rendered device screenshot is claimed.
   ordinary haptic. Reset restores only this setting's defaults.
   One process-wide writer preserves save order across Activity recreation; callbacks
   from a previous screen lifecycle cannot overwrite a resumed screen's state.
+  Controls wait for a fresh settings snapshot on resume. Explicit preview requests
+  flush a pending slider value and wait for queued writes. A failed write disables
+  editing until a single reload restores the stored value; a failed read does not
+  trigger a retry loop. Leaving and reopening the screen retries loading.
 - Previews resolve the same recipes in system_server, after refreshing the saved
   configuration. Private IDs 20001–20003 require `VIBRATE_SYSTEM_CONSTANTS`.
 - Turning the engine off returns to the existing provider. Muting/disabling also
