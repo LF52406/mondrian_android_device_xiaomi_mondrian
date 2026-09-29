@@ -82,7 +82,7 @@ public final class HapticActivity extends Activity implements SettingsStore.List
                         VibrationEffect.Composition.PRIMITIVE_THUD,
                         VibrationEffect.Composition.PRIMITIVE_QUICK_RISE,
                         VibrationEffect.Composition.PRIMITIVE_QUICK_FALL);
-        mStore = new SettingsStore(getContentResolver());
+        mStore = new SettingsStore(this);
         mProfiles = savedInstanceState != null && savedInstanceState.getBoolean("profiles");
         applyPalette();
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(

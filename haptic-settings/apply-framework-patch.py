@@ -21,7 +21,10 @@ def main():
     parser.add_argument("--check", action="store_true", help="Check integration without applying it")
     args = parser.parse_args()
     framework = args.rom_root.resolve() / "frameworks/base"
-    patch = Path(__file__).resolve().parent / "patches/0001-mondrian-haptic-engine.patch"
+    patches = Path(__file__).resolve().parent / "patches"
+    patch = patches / "0001-mondrian-haptic-engine.patch"
+    previous = patches / "previous/0001-mondrian-haptic-engine.patch"
+    upgrade = patches / "upgrades/0001-to-0002.patch"
     root = git(framework, "rev-parse", "--show-toplevel")
     if root.returncode or Path(root.stdout.strip()).resolve() != framework:
         raise RuntimeError("frameworks/base must be a Git checkout in the selected ROM root")
@@ -36,13 +39,20 @@ def main():
             print("ok")
             return
         result = git(framework, "apply", "--check", str(patch))
+        selected_patch = patch
         if result.returncode:
-            raise RuntimeError("Framework hooks conflict with this checkout; no changes applied. "
-                               "Review the framework revision or a partially applied patch.\n"
-                               + result.stderr.strip())
+            # Upgrade only a complete, recognizable previous installation. Preserve local edits.
+            if (previous.is_file() and upgrade.is_file()
+                    and git(framework, "apply", "--reverse", "--check", str(previous)).returncode == 0
+                    and git(framework, "apply", "--check", str(upgrade)).returncode == 0):
+                selected_patch = upgrade
+            else:
+                raise RuntimeError("Framework hooks conflict with this checkout; no changes applied. "
+                                   "Review the framework revision or a partially applied patch.\n"
+                                   + result.stderr.strip())
         if args.check:
             raise RuntimeError("Compatible but not applied. Run this script without --check")
-        result = git(framework, "apply", str(patch))
+        result = git(framework, "apply", str(selected_patch))
         if result.returncode:
             raise RuntimeError(result.stderr.strip())
         if git(framework, "apply", "--reverse", "--check", str(patch)).returncode:

@@ -2,10 +2,13 @@
 package org.mondrian.haptics;
 
 import android.content.ContentResolver;
+import android.content.Context;
 import android.database.ContentObserver;
 import android.os.Handler;
 import android.os.HapticEngineConfig;
 import android.os.Looper;
+import android.os.VibrationAttributes;
+import android.os.Vibrator;
 import android.provider.Settings;
 
 import java.util.concurrent.ExecutorService;
@@ -13,6 +16,9 @@ import java.util.concurrent.Executors;
 
 /** Serializes writes off the UI thread; an older observer result cannot undo a newer edit. */
 final class SettingsStore implements AutoCloseable {
+    // Activity recreation must not create a second writer that can overtake an older save.
+    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
+
     interface Listener {
         void onState(HapticEngineConfig config, boolean systemAllowed, boolean inputRedirected);
         void onSaved(int preview);
@@ -20,8 +26,8 @@ final class SettingsStore implements AutoCloseable {
     }
 
     private final ContentResolver mResolver;
+    private final int mDefaultTouchIntensity;
     private final Handler mMain = new Handler(Looper.getMainLooper());
-    private final ExecutorService mIo = Executors.newSingleThreadExecutor();
     private final ContentObserver mObserver = new ContentObserver(mMain) {
         @Override public void onChange(boolean selfChange) { refresh(); }
     };
@@ -30,7 +36,12 @@ final class SettingsStore implements AutoCloseable {
     private boolean mStarted;
     private boolean mClosed;
 
-    SettingsStore(ContentResolver resolver) { mResolver = resolver; }
+    SettingsStore(Context context) {
+        mResolver = context.getContentResolver();
+        Vibrator vibrator = context.getSystemService(Vibrator.class);
+        mDefaultTouchIntensity = vibrator == null ? Vibrator.VIBRATION_INTENSITY_OFF
+                : vibrator.getDefaultVibrationIntensity(VibrationAttributes.USAGE_TOUCH);
+    }
 
     void start(Listener listener) {
         if (mClosed) return;
@@ -50,6 +61,7 @@ final class SettingsStore implements AutoCloseable {
 
     void stop() {
         mListener = null;
+        ++mGeneration;
         if (mStarted) mResolver.unregisterContentObserver(mObserver);
         mStarted = false;
     }
@@ -57,17 +69,22 @@ final class SettingsStore implements AutoCloseable {
     void refresh() {
         if (mClosed) return;
         int generation = mGeneration;
-        mIo.execute(() -> {
+        IO.execute(() -> {
             try {
                 HapticEngineConfig config = HapticEngineConfig.parse(Settings.Secure.getString(
                         mResolver, HapticEngineConfig.SETTINGS_KEY));
+                int intensity = Settings.System.getInt(mResolver,
+                        Settings.System.HAPTIC_FEEDBACK_INTENSITY, mDefaultTouchIntensity);
+                if (intensity < Vibrator.VIBRATION_INTENSITY_OFF
+                        || intensity > Vibrator.VIBRATION_INTENSITY_HIGH) {
+                    intensity = mDefaultTouchIntensity;
+                }
                 boolean allowed = Settings.System.getInt(mResolver,
-                        Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) != 0
-                        && Settings.System.getInt(mResolver,
-                                Settings.System.HAPTIC_FEEDBACK_INTENSITY, 2) != 0
-                        && Settings.System.getInt(mResolver, Settings.System.VIBRATE_ON, 1) != 0;
+                        Settings.System.HAPTIC_FEEDBACK_ENABLED, 0) != 0
+                        && intensity != Vibrator.VIBRATION_INTENSITY_OFF
+                        && Settings.System.getInt(mResolver, Settings.System.VIBRATE_ON, 1) > 0;
                 boolean redirected = Settings.System.getInt(mResolver,
-                        Settings.System.VIBRATE_INPUT_DEVICES, 0) != 0;
+                        Settings.System.VIBRATE_INPUT_DEVICES, 0) > 0;
                 mMain.post(() -> {
                     if (mListener != null && generation == mGeneration) {
                         mListener.onState(config, allowed, redirected);
@@ -80,7 +97,7 @@ final class SettingsStore implements AutoCloseable {
     void save(HapticEngineConfig config, int preview) {
         if (mClosed) return;
         int generation = ++mGeneration;
-        mIo.execute(() -> {
+        IO.execute(() -> {
             try {
                 if (!Settings.Secure.putString(mResolver, HapticEngineConfig.SETTINGS_KEY,
                         config.toString())) {
@@ -103,7 +120,6 @@ final class SettingsStore implements AutoCloseable {
     @Override public void close() {
         stop();
         mClosed = true;
-        // Complete queued writes even when the user immediately leaves the page.
-        mIo.shutdown();
+        // The process-wide writer completes queued saves in order after this screen closes.
     }
 }

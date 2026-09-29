@@ -344,7 +344,7 @@ index c6efe4340..0290450d3 100644
       * Scale a {@link PrebakedSegment} based on the given usage hint for this vibration.
       *
 diff --git a/services/core/java/com/android/server/vibrator/VibrationSettings.java b/services/core/java/com/android/server/vibrator/VibrationSettings.java
-index a3de4b6c6..eaf77e35e 100644
+index a3de4b6c6..6dc5dde69 100644
 --- a/services/core/java/com/android/server/vibrator/VibrationSettings.java
 +++ b/services/core/java/com/android/server/vibrator/VibrationSettings.java
 @@ -46,6 +46,7 @@ import android.media.AudioManager;
@@ -355,7 +355,7 @@ index a3de4b6c6..eaf77e35e 100644
  import android.os.PowerManager;
  import android.os.PowerManagerInternal;
  import android.os.PowerSaveState;
-@@ -176,6 +177,25 @@ final class VibrationSettings {
+@@ -176,6 +177,15 @@ final class VibrationSettings {
      private final SparseArray<VibrationEffect> mFallbackEffects;
  
      private final VibrationConfig mVibrationConfig;
@@ -368,20 +368,10 @@ index a3de4b6c6..eaf77e35e 100644
 +        }
 +    }
 +
-+    /** Read one cached policy snapshot; engine percentages never override a system OFF. */
-+    boolean shouldVibrateForHapticEngine(int usage) {
-+        synchronized (mLock) {
-+            return mHapticEngineConfig.enabled && mHapticEngineConfig.strength > 0
-+                    && mVibrateOn && !mVibrateInputDevices
-+                    && getCurrentIntensity(USAGE_TOUCH) != Vibrator.VIBRATION_INTENSITY_OFF
-+                    && getCurrentIntensity(usage) != Vibrator.VIBRATION_INTENSITY_OFF;
-+        }
-+    }
-+
  
      @GuardedBy("mLock")
      @Nullable
-@@ -270,6 +290,8 @@ final class VibrationSettings {
+@@ -270,6 +280,8 @@ final class VibrationSettings {
                  new IntentFilter(AudioManager.INTERNAL_RINGER_MODE_CHANGED_ACTION),
                  Context.RECEIVER_EXPORTED_UNAUDITED);
  
@@ -390,7 +380,7 @@ index a3de4b6c6..eaf77e35e 100644
          // Listen to all settings that might affect the result of Vibrator.getVibrationIntensity.
          registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_INPUT_DEVICES));
          registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_ON));
-@@ -532,6 +554,8 @@ final class VibrationSettings {
+@@ -532,6 +544,8 @@ final class VibrationSettings {
  
      private void updateSettings(int userHandle) {
          synchronized (mLock) {
@@ -399,7 +389,7 @@ index a3de4b6c6..eaf77e35e 100644
              mVibrateInputDevices =
                      loadSystemSetting(Settings.System.VIBRATE_INPUT_DEVICES, 0, userHandle) > 0;
              mVibrateOn = loadSystemSetting(Settings.System.VIBRATE_ON, 1, userHandle) > 0;
-@@ -665,6 +689,7 @@ final class VibrationSettings {
+@@ -665,6 +679,7 @@ final class VibrationSettings {
              pw.println("VibrationSettings:");
              pw.increaseIndent();
              pw.println("vibrateOn = " + mVibrateOn);
@@ -408,7 +398,7 @@ index a3de4b6c6..eaf77e35e 100644
              pw.println("batterySaverMode = " + mBatterySaverMode);
              pw.println("ringerMode = " + ringerModeToString(mRingerMode));
 diff --git a/services/core/java/com/android/server/vibrator/VibratorManagerService.java b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
-index 3ac6a03f6..5e9a6a89a 100644
+index 3ac6a03f6..c1cd94201 100644
 --- a/services/core/java/com/android/server/vibrator/VibratorManagerService.java
 +++ b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
 @@ -47,6 +47,7 @@ import android.os.CombinedVibration;
@@ -419,7 +409,15 @@ index 3ac6a03f6..5e9a6a89a 100644
  import android.os.IBinder;
  import android.os.ICancellationSignal;
  import android.os.IExternalVibratorService;
-@@ -83,6 +84,7 @@ import android.util.Slog;
+@@ -65,6 +66,7 @@ import android.os.SystemClock;
+ import android.os.Trace;
+ import android.os.VibrationAttributes;
+ import android.os.VibrationEffect;
++import android.os.Vibrator;
+ import android.os.VibratorInfo;
+ import android.os.vibrator.Flags;
+ import android.os.vibrator.IHapticGeneratorSessionCallback;
+@@ -83,6 +85,7 @@ import android.util.Slog;
  import android.util.SparseArray;
  import android.util.proto.ProtoOutputStream;
  import android.view.HapticFeedbackConstants;
@@ -427,7 +425,7 @@ index 3ac6a03f6..5e9a6a89a 100644
  
  import com.android.internal.annotations.GuardedBy;
  import com.android.internal.annotations.VisibleForTesting;
-@@ -608,9 +610,22 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+@@ -608,9 +611,22 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
              logAndRecordPerformHapticFeedbackAttempt(uid, deviceId, opPkg, reason, ignoreStatus);
              return null;
          }
@@ -452,7 +450,7 @@ index 3ac6a03f6..5e9a6a89a 100644
      }
  
      /**
-@@ -634,10 +649,38 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+@@ -634,10 +650,41 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
              logAndRecordPerformHapticFeedbackAttempt(uid, deviceId, opPkg, reason, ignoreStatus);
              return null;
          }
@@ -480,7 +478,10 @@ index 3ac6a03f6..5e9a6a89a 100644
 +            int constant, String reason, IBinder token, HapticProfileEngine.Result result,
 +            VibrationAttributes attrs) {
 +        if (result.effect == null
-+                || !mVibrationSettings.shouldVibrateForHapticEngine(attrs.getUsage())) {
++                || mVibrationSettings.getCurrentIntensity(VibrationAttributes.USAGE_TOUCH)
++                        == Vibrator.VIBRATION_INTENSITY_OFF
++                || mVibrationSettings.getCurrentIntensity(attrs.getUsage())
++                        == Vibrator.VIBRATION_INTENSITY_OFF) {
 +            logAndRecordPerformHapticFeedbackAttempt(uid, deviceId, opPkg, reason,
 +                    Status.IGNORED_FOR_SETTINGS);
 +            return null;
@@ -494,7 +495,7 @@ index 3ac6a03f6..5e9a6a89a 100644
      }
  
      private HalVibration performHapticFeedbackWithEffect(int uid, int deviceId, String opPkg,
-@@ -680,6 +723,13 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+@@ -680,6 +727,13 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
      private HalVibration vibrateInternal(int uid, int deviceId, String opPkg,
              @NonNull CombinedVibration effect, @NonNull VibrationAttributes attrs,
              String reason, IBinder token) {
@@ -508,7 +509,7 @@ index 3ac6a03f6..5e9a6a89a 100644
          CallerInfo callerInfo = new CallerInfo(attrs, uid, deviceId, opPkg, reason);
          if (token == null) {
              Slog.e(TAG, "token must not be null");
-@@ -701,6 +751,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+@@ -701,6 +755,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
          // Create Vibration.Stats as close to the received request as possible, for tracking.
          SingleVibrationSession session = new SingleVibrationSession(token, callerInfo, effect);
          HalVibration vib = session.getVibration();
@@ -516,12 +517,14 @@ index 3ac6a03f6..5e9a6a89a 100644
          if (!Flags.removeHidlSupport()) {
              vib.fillFallbacks(mVibrationSettings::getFallbackEffect);
          }
-@@ -1178,12 +1229,18 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+@@ -1178,12 +1233,20 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
                  updateAlwaysOnLocked(mAlwaysOnEffects.valueAt(i));
              }
  
-+            if (mNextSession instanceof SingleVibrationSession next
-+                    && isHapticEngineSuppressed(next.getVibration())) {
++            HapticEngineConfig engineConfig = mVibrationSettings.getHapticEngineConfig();
++            boolean engineMuted = !engineConfig.enabled || engineConfig.strength == 0;
++            if (engineMuted && mNextSession instanceof SingleVibrationSession next
++                    && next.getVibration().isHapticEngineEffect()) {
 +                clearNextSessionLocked(Status.CANCELLED_BY_SETTINGS_UPDATE, null);
 +            }
              if (mCurrentSession == null) {
@@ -530,45 +533,9 @@ index 3ac6a03f6..5e9a6a89a 100644
  
              Status ignoreStatus = shouldIgnoreVibrationLocked(mCurrentSession.getCallerInfo());
 -            if (inputDevicesChanged || (ignoreStatus != null)) {
-+            boolean cancelEngine = mCurrentSession instanceof SingleVibrationSession current
-+                    && isHapticEngineSuppressed(current.getVibration());
++            boolean cancelEngine = engineMuted && mCurrentSession instanceof SingleVibrationSession current
++                    && current.getVibration().isHapticEngineEffect();
 +            if (inputDevicesChanged || cancelEngine || (ignoreStatus != null)) {
                  if (DEBUG) {
                      Slog.d(TAG, "Canceling vibration because settings changed: "
                              + (ignoreStatus == null ? "input devices changed" : ignoreStatus));
-@@ -1227,6 +1284,11 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
-     private Status startVibrationLocked(SingleVibrationSession session) {
-         Trace.traceBegin(TRACE_TAG_VIBRATOR, "startVibrationLocked");
-         try {
-+            HalVibration vibration = session.getVibration();
-+            if (isHapticEngineSuppressed(vibration)
-+                    || (vibration.isHapticEngineEffect() && mInputDeviceDelegate.isAvailable())) {
-+                return Status.IGNORED_FOR_SETTINGS;
-+            }
-             if (mInputDeviceDelegate.isAvailable()) {
-                 return startVibrationOnInputDevicesLocked(session.getVibration());
-             }
-@@ -1248,6 +1310,10 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
-     @GuardedBy("mLock")
-     @Nullable
-     private Status startVibrationOnThreadLocked(SingleVibrationSession session) {
-+        // A queued effect may outlive the settings snapshot that selected its recipe.
-+        if (isHapticEngineSuppressed(session.getVibration())) {
-+            return Status.IGNORED_FOR_SETTINGS;
-+        }
-         if (DEBUG) {
-             Slog.d(TAG, "Starting vibration " + session.getVibration().id + " on thread");
-         }
-@@ -1317,6 +1383,12 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
-         logAndRecordVibration(session.getDebugInfo());
-     }
- 
-+    private boolean isHapticEngineSuppressed(HalVibration vibration) {
-+        return vibration.isHapticEngineEffect()
-+                && !mVibrationSettings.shouldVibrateForHapticEngine(
-+                        vibration.callerInfo.attrs.getUsage());
-+    }
-+
-     private VibrationStepConductor createVibrationStepConductor(HalVibration vib) {
-         return createVibrationStepConductor(vib, mDeviceAdapter, /* isInSession= */ false);
-     }

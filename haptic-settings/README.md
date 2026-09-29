@@ -17,6 +17,10 @@ Evolution X framework fork. Preparation changes the framework working tree, not
 its Git history. Repeating it verifies the existing patch. Conflicts and partial
 application stop product configuration with an error rather than silently omit
 the backend. The script uses a checkout-local lock for concurrent product queries.
+It also recognizes the complete first implementation (`ae6abe0` / `fb0e202`) and
+applies its checked incremental upgrade. Re-running with the current integration
+is a no-op. An unrecognized or partially modified installation fails before any
+write; the script never resets framework files or discards local changes.
 
 For explicit preparation from the ROM root:
 
@@ -42,17 +46,28 @@ not guaranteed by the package name alone.
   double scaling. Adaptive scaling remains at its normal stage. No public bypass
   flag is introduced: only the internal haptic path marks owned vibrations.
 - Android's system OFF and existing policy retain priority. The implementation
-  does not change the stock intensity settings. While enabled, engine percentages
-  control covered events; LOW/MEDIUM/HIGH continue to control stock paths.
-  A shared bidirectional percentage/stock-level UI model is not implemented.
+  does not change the stock intensity settings. The percentage is the sole strength
+  control for covered events; LOW/MEDIUM/HIGH continue to control stock paths.
+  There is deliberately no three-level-to-percentage conversion or bidirectional
+  observer loop: stock touch intensity also affects accessibility and, on some
+  configurations, IME. Moving this slider must not change those effects.
+  Stock touch OFF, the legacy touch-feedback switch and the global vibration
+  switch all suppress engine events. Hardware-feedback OFF additionally suppresses
+  its covered hardware events. Restoring a stock switch restores the saved engine
+  percentage. A slider value of 0 mutes only covered engine events.
 - One versioned Secure setting, `mondrian_haptic_engine`, stores
   `1:enabled:profile:strength` per user. Writes occur off the UI thread. Framework
   observers cache it, reload on user switch, and do not read storage for each
   ordinary haptic. Reset restores only this setting's defaults.
+  One process-wide writer preserves save order across Activity recreation; callbacks
+  from a previous screen lifecycle cannot overwrite a resumed screen's state.
 - Previews resolve the same recipes in system_server, after refreshing the saved
   configuration. Private IDs 20001–20003 require `VIBRATE_SYSTEM_CONSTANTS`.
 - Turning the engine off returns to the existing provider. Muting/disabling also
   cancels its active/queued samples, without cancelling unrelated vibrations.
+  System OFF and input-device routing changes use the same cancellation rule.
+  The cached policy is checked again when a queued sample starts, and owned
+  compositions are never forwarded to an external input device.
 
 ## Coverage and HAL
 
@@ -94,13 +109,20 @@ Settings registration was inspected in MistOS
 ## Validation status and next work
 
 The application's resources were compiled/linked using AAPT2. The new config,
-recipe engine and application Java are checked against an Android 17 framework
-jar. This is not a Soong platform build or an installed APK test. Compiling the
+recipe engine and application Java in the initial implementation were checked
+against an Android 17 framework jar. These checks predate the follow-up lifecycle
+and queued-policy changes. This is not a Soong platform build or an installed APK test. Compiling the
 entire service against that standalone jar is blocked by missing generated AOSP
 Flags and R8 annotations; those inputs belong to the ROM build.
 
-Additional test work was stopped at the user's request to conserve quota.
+Additional compilation/test setup was stopped at the user's request to conserve quota.
 No full ROM build, instrumentation run or physical haptic calibration is claimed.
+
+The follow-up integration check used the exact affected files from the two
+framework revisions above: the current patch passes a clean apply check on both;
+initial installation on MistOS and upgrade from v1 on Evolution X produce the
+expected file contents. Repeated verification recognizes the completed patch.
+This checks patch integration only, not the complete product build hook or runtime.
 
 Next: build the APK and services in a complete Android 17 checkout; verify the
 product-configuration preparation hook in that build, Settings tile discovery,
