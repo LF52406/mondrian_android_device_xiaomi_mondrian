@@ -18,7 +18,8 @@ final class ResolutionPreviewView extends View {
 
     private final Bitmap mClear;
     private final Bitmap mPixelated;
-    private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mBitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mOverlayPaint = new Paint();
     private final Paint mGridPaint = new Paint();
     private final Path mClip = new Path();
     private boolean mUsePixelated;
@@ -59,14 +60,15 @@ final class ResolutionPreviewView extends View {
         canvas.clipPath(mClip);
 
         Bitmap bitmap = mUsePixelated && mPixelated != null ? mPixelated : mClear;
-        mPaint.setFilterBitmap(!mUsePixelated);
+        mBitmapPaint.setFilterBitmap(!mUsePixelated);
+        mBitmapPaint.setAlpha(255);
 
         Rect src = centerCrop(bitmap, getWidth(), getHeight());
-        canvas.drawBitmap(bitmap, src, dst, mPaint);
+        canvas.drawBitmap(bitmap, src, dst, mBitmapPaint);
 
         if (mUsePixelated) {
-            mPaint.setColor(0x16000000);
-            canvas.drawRect(dst, mPaint);
+            mOverlayPaint.setColor(0x16000000);
+            canvas.drawRect(dst, mOverlayPaint);
             drawPixelGrid(canvas, src, dst);
         }
         canvas.restoreToCount(save);

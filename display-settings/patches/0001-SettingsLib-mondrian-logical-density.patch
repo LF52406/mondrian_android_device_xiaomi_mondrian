@@ -2,7 +2,7 @@ diff --git a/packages/SettingsLib/src/com/android/settingslib/display/DisplayDen
 index 0d7f03e1..4b3c67ec 100644
 --- a/packages/SettingsLib/src/com/android/settingslib/display/DisplayDensityUtils.java
 +++ b/packages/SettingsLib/src/com/android/settingslib/display/DisplayDensityUtils.java
-@@ -417,6 +417,20 @@ public class DisplayDensityUtils {
+@@ -417,6 +417,21 @@ public class DisplayDensityUtils {
       */
 -    private static int getDefaultDensityForDisplay(int displayId) {
 +    public static int getDefaultDensityForDisplay(int displayId) {
@@ -13,7 +13,8 @@ index 0d7f03e1..4b3c67ec 100644
 +            // Mondrian retains native panel timings while rendering at a smaller logical size.
 +            // Screen zoom's presets and reset must use the corresponding logical default DPI.
 +            if (displayId == Display.DEFAULT_DISPLAY
-+                    && "mondrian".equals(android.os.Build.DEVICE)) {
++                    && "mondrian".equals(android.os.SystemProperties.get(
++                            "ro.product.vendor.device", ""))) {
 +                final android.graphics.Point initial = new android.graphics.Point();
 +                final android.graphics.Point current = new android.graphics.Point();
 +                wm.getInitialDisplaySize(displayId, initial);
@@ -25,7 +26,7 @@ index 0d7f03e1..4b3c67ec 100644
 +            }
 +            return nativeDensity;
          } catch (RemoteException exc) {
-@@ -450,3 +464,9 @@ public class DisplayDensityUtils {
+@@ -450,3 +465,9 @@ public class DisplayDensityUtils {
                      final IWindowManager wm = WindowManagerGlobal.getWindowManagerService();
 -                    wm.clearForcedDisplayDensityForUser(displayId, userId);
 +                    final int defaultDensity = getDefaultDensityForDisplay(displayId);

@@ -136,24 +136,52 @@ final class DisplayBackend implements ResolutionEngine.Backend {
     @Override
     public void apply(ResolutionEngine.Frame frame) throws Exception {
         if (!supported()) throw new IllegalStateException("Unsupported display");
-        // All calls are typed Binder APIs; no shell, root, hidden transaction IDs or properties.
-        mWm.setForcedDisplayScalingMode(Display.DEFAULT_DISPLAY, frame.scaling);
-        if (frame.width == ResolutionEngine.NATIVE_WIDTH
-                && frame.height == ResolutionEngine.NATIVE_HEIGHT) {
-            mWm.clearForcedDisplaySize(Display.DEFAULT_DISPLAY);
-        } else {
-            mWm.setForcedDisplaySize(Display.DEFAULT_DISPLAY, frame.width, frame.height);
+        // All calls are typed Binder APIs; avoid no-op setters because each one can trigger a
+        // WindowManager display reconfiguration even when the requested value is unchanged.
+        int currentScaling = Settings.Global.getInt(mContext.getContentResolver(),
+                Settings.Global.DISPLAY_SCALING_FORCE, 0);
+        if (currentScaling != frame.scaling) {
+            mWm.setForcedDisplayScalingMode(Display.DEFAULT_DISPLAY, frame.scaling);
         }
+
+        Point currentSize = new Point();
+        mWm.getBaseDisplaySize(Display.DEFAULT_DISPLAY, currentSize);
+        if (currentSize.x != frame.width || currentSize.y != frame.height) {
+            if (frame.width == ResolutionEngine.NATIVE_WIDTH
+                    && frame.height == ResolutionEngine.NATIVE_HEIGHT) {
+                mWm.clearForcedDisplaySize(Display.DEFAULT_DISPLAY);
+            } else {
+                mWm.setForcedDisplaySize(Display.DEFAULT_DISPLAY, frame.width, frame.height);
+            }
+        }
+
         int foreground = ActivityManager.getCurrentUser();
+        int initialDensity = mWm.getInitialDisplayDensity(Display.DEFAULT_DISPLAY);
         for (UserInfo user : users()) {
-            if (user.id != foreground && frame.densities.containsKey(user.id)) {
-                setDensity(user.id, frame.densities.get(user.id));
+            Integer target = frame.densities.get(user.id);
+            if (user.id != foreground && target != null
+                    && currentDensityForUser(user.id, foreground, initialDensity) != target) {
+                setDensity(user.id, target);
             }
         }
         // WM's density-forced flag is display-wide. Always finish with the foreground user.
-        if (frame.densities.containsKey(foreground)) {
-            setDensity(foreground, frame.densities.get(foreground));
+        Integer foregroundTarget = frame.densities.get(foreground);
+        if (foregroundTarget != null
+                && currentDensityForUser(foreground, foreground, initialDensity)
+                        != foregroundTarget) {
+            setDensity(foreground, foregroundTarget);
         }
+    }
+
+    private int currentDensityForUser(int userId, int foreground, int initialDensity)
+            throws Exception {
+        if (userId == foreground) {
+            int density = mWm.getBaseDisplayDensity(Display.DEFAULT_DISPLAY);
+            return density > 0 ? density : initialDensity;
+        }
+        int density = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                Settings.Secure.DISPLAY_DENSITY_FORCED, 0, userId);
+        return density > 0 ? density : initialDensity;
     }
 
     private void setDensity(int userId, int density) throws Exception {

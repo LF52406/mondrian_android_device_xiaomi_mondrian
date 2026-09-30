@@ -79,10 +79,11 @@ public final class ResolutionFragment extends Fragment {
         run(R.string.resolution_error, () -> {
             ResolutionEngine.Frame before = mController.backend.read();
             int targetHeight = width == 1080 ? 2400 : ResolutionEngine.NATIVE_HEIGHT;
-            boolean changingResolution = before.width != width
-                    || before.height != targetHeight;
-            if (changingResolution) {
-                // Every real resolution transaction starts from verified full-frame mode.
+            boolean changingDisplayConfig = before.width != width
+                    || before.height != targetHeight
+                    || before.scaling != 0;
+            if (changingDisplayConfig) {
+                // Any real WM display transaction starts from verified full-frame mode.
                 mController.partialUpdate.ensureDisabledForTransition();
             }
 
@@ -197,10 +198,11 @@ public final class ResolutionFragment extends Fragment {
         mFhd.setChecked(ui.frame.width == 1080 && ui.frame.height == 2400);
         mWqhd.setChecked(ui.frame.width == 1440 && ui.frame.height == 3200);
 
+        boolean partialActive = ui.partial.available && ui.partial.enabled;
         mUpdatingSwitch = true;
-        mPartialSwitch.setChecked(ui.partial.available && ui.partial.enabled);
+        mPartialSwitch.setChecked(partialActive);
         mUpdatingSwitch = false;
-        mPartialDiagram.setPartialUpdateEnabled(ui.partial.enabled);
+        mPartialDiagram.setPartialUpdateEnabled(partialActive);
 
         updateEnabled();
     }
