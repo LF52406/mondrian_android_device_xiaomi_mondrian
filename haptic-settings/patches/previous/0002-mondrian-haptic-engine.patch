@@ -408,7 +408,7 @@ index a3de4b6c6..eaf77e35e 100644
              pw.println("batterySaverMode = " + mBatterySaverMode);
              pw.println("ringerMode = " + ringerModeToString(mRingerMode));
 diff --git a/services/core/java/com/android/server/vibrator/VibratorManagerService.java b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
-index 3ac6a03f6..caece01d2 100644
+index 3ac6a03f6..5e9a6a89a 100644
 --- a/services/core/java/com/android/server/vibrator/VibratorManagerService.java
 +++ b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
 @@ -47,6 +47,7 @@ import android.os.CombinedVibration;
@@ -516,19 +516,7 @@ index 3ac6a03f6..caece01d2 100644
          if (!Flags.removeHidlSupport()) {
              vib.fillFallbacks(mVibrationSettings::getFallbackEffect);
          }
-@@ -718,6 +769,11 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
- 
-             // Check if user settings or DnD is set to ignore this vibration.
-             Status ignoreStatus = shouldIgnoreVibrationLocked(callerInfo);
-+            // Reject stale engine requests before they can interrupt or replace another session.
-+            if (ignoreStatus == null && (isHapticEngineSuppressed(vib)
-+                    || (vib.isHapticEngineEffect() && mInputDeviceDelegate.isAvailable()))) {
-+                ignoreStatus = Status.IGNORED_FOR_SETTINGS;
-+            }
-             CallerInfo ignoredBy = null;
- 
-             // Check if ongoing vibration is more important than this vibration.
-@@ -1178,12 +1234,18 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+@@ -1178,12 +1229,18 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
                  updateAlwaysOnLocked(mAlwaysOnEffects.valueAt(i));
              }
  
@@ -548,18 +536,19 @@ index 3ac6a03f6..caece01d2 100644
                  if (DEBUG) {
                      Slog.d(TAG, "Canceling vibration because settings changed: "
                              + (ignoreStatus == null ? "input devices changed" : ignoreStatus));
-@@ -1227,7 +1289,9 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+@@ -1227,6 +1284,11 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
      private Status startVibrationLocked(SingleVibrationSession session) {
          Trace.traceBegin(TRACE_TAG_VIBRATOR, "startVibrationLocked");
          try {
--            if (mInputDeviceDelegate.isAvailable()) {
-+            // Engine recipes remain on the phone if the delegate changes after admission.
-+            if (!session.getVibration().isHapticEngineEffect()
-+                    && mInputDeviceDelegate.isAvailable()) {
++            HalVibration vibration = session.getVibration();
++            if (isHapticEngineSuppressed(vibration)
++                    || (vibration.isHapticEngineEffect() && mInputDeviceDelegate.isAvailable())) {
++                return Status.IGNORED_FOR_SETTINGS;
++            }
+             if (mInputDeviceDelegate.isAvailable()) {
                  return startVibrationOnInputDevicesLocked(session.getVibration());
              }
-             if (mCurrentSession == null) {
-@@ -1248,6 +1312,10 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+@@ -1248,6 +1310,10 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
      @GuardedBy("mLock")
      @Nullable
      private Status startVibrationOnThreadLocked(SingleVibrationSession session) {
@@ -570,7 +559,7 @@ index 3ac6a03f6..caece01d2 100644
          if (DEBUG) {
              Slog.d(TAG, "Starting vibration " + session.getVibration().id + " on thread");
          }
-@@ -1317,6 +1385,12 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+@@ -1317,6 +1383,12 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
          logAndRecordVibration(session.getDebugInfo());
      }
  

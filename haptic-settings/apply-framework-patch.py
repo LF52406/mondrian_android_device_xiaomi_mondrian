@@ -23,8 +23,12 @@ def main():
     framework = args.rom_root.resolve() / "frameworks/base"
     patches = Path(__file__).resolve().parent / "patches"
     patch = patches / "0001-mondrian-haptic-engine.patch"
-    previous = patches / "previous/0001-mondrian-haptic-engine.patch"
-    upgrade = patches / "upgrades/0001-to-0002.patch"
+    upgrades = [
+        (patches / "previous/0002-mondrian-haptic-engine.patch",
+         patches / "upgrades/0002-to-0003.patch"),
+        (patches / "previous/0001-mondrian-haptic-engine.patch",
+         patches / "upgrades/0001-to-0003.patch"),
+    ]
     root = git(framework, "rev-parse", "--show-toplevel")
     if root.returncode or Path(root.stdout.strip()).resolve() != framework:
         raise RuntimeError("frameworks/base must be a Git checkout in the selected ROM root")
@@ -42,10 +46,12 @@ def main():
         selected_patch = patch
         if result.returncode:
             # Upgrade only a complete, recognizable previous installation. Preserve local edits.
-            if (previous.is_file() and upgrade.is_file()
-                    and git(framework, "apply", "--reverse", "--check", str(previous)).returncode == 0
-                    and git(framework, "apply", "--check", str(upgrade)).returncode == 0):
-                selected_patch = upgrade
+            for previous, upgrade in upgrades:
+                if (previous.is_file() and upgrade.is_file()
+                        and git(framework, "apply", "--reverse", "--check", str(previous)).returncode == 0
+                        and git(framework, "apply", "--check", str(upgrade)).returncode == 0):
+                    selected_patch = upgrade
+                    break
             else:
                 raise RuntimeError("Framework hooks conflict with this checkout; no changes applied. "
                                    "Review the framework revision or a partially applied patch.\n"

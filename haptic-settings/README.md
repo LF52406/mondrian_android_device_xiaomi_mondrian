@@ -17,9 +17,10 @@ Evolution X framework fork. Preparation changes the framework working tree, not
 its Git history. Repeating it verifies the existing patch. Conflicts and partial
 application stop product configuration with an error rather than silently omit
 the backend. The script uses a checkout-local lock for concurrent product queries.
-It also recognizes the complete first implementation (`ae6abe0` / `fb0e202`) and
-applies its checked incremental upgrade. Re-running with the current integration
-is a no-op. An unrecognized or partially modified installation fails before any
+It also recognizes complete v1 (`ae6abe0` / `fb0e202`) and v2 (`ee35d58`, including
+subsequent settings-only updates) installations and applies their checked direct
+upgrade to the current integration. Re-running with the current integration
+is a no-op. An unrecognized or conflicting partial installation fails before any
 write; the script never resets framework files or discards local changes.
 
 For explicit preparation from the ROM root:
@@ -90,8 +91,11 @@ mondrian remains pending; no rendered device screenshot is claimed.
 - Turning the engine off returns to the existing provider. Muting/disabling also
   cancels its active/queued samples, without cancelling unrelated vibrations.
   System OFF and input-device routing changes use the same cancellation rule.
-  The cached policy is checked again when a queued sample starts, and owned
-  compositions are never forwarded to an external input device.
+  Engine admission is checked under the service lock before interrupting the
+  current session or replacing a queued session. A stale suppressed request cannot
+  cancel another session before being rejected. The cached policy is checked again
+  when a queued sample starts. Owned compositions are never forwarded to an
+  external input device, including if the delegate changes after admission.
 
 ## Coverage and HAL
 
@@ -147,6 +151,12 @@ framework revisions above: the current patch passes a clean apply check on both;
 initial installation on MistOS and upgrade from v1 on Evolution X produce the
 expected file contents. Repeated verification recognizes the completed patch.
 This checks patch integration only, not the complete product build hook or runtime.
+
+The admission-order fix also passes focused integration checks for clean setup,
+direct upgrades from v1 and v2, repeated application and check-only mode. A local
+edit outside the patch hunks is preserved; conflicting and incomplete installations
+are rejected without modifying source files. Runtime race reproduction and a full
+platform build remain pending.
 
 Next: build the APK and services in a complete Android 17 checkout; verify the
 product-configuration preparation hook in that build, Settings tile discovery,
