@@ -1,0 +1,7 @@
+ro.vendor.mondrian.display_control u:object_r:vendor_mondrian_display_request_prop:s0 exact bool
+vendor.mondrian.display.request u:object_r:vendor_mondrian_display_request_prop:s0 exact string
+vendor.mondrian.display.status u:object_r:vendor_mondrian_display_state_prop:s0 exact string
+vendor.mondrian.display.profile u:object_r:vendor_mondrian_display_state_prop:s0 exact string
+vendor.mondrian.display.pu_allowed u:object_r:vendor_mondrian_display_state_prop:s0 exact bool
+vendor.mondrian.display.profile_serial u:object_r:vendor_mondrian_display_state_prop:s0 exact string
+vendor.mondrian.display.profile_applied u:object_r:vendor_mondrian_display_state_prop:s0 exact string

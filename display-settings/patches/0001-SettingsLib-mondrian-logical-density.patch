@@ -13,7 +13,7 @@ index 0d7f03e1..4b3c67ec 100644
 +            // Mondrian retains native panel timings while rendering at a smaller logical size.
 +            // Screen zoom's presets and reset must use the corresponding logical default DPI.
 +            if (displayId == Display.DEFAULT_DISPLAY
-+                    && "mondrian".equals(android.os.Build.DEVICE)) {
++                    && "mondrian".equals(android.os.SystemProperties.get("ro.product.vendor.device"))) {
 +                final android.graphics.Point initial = new android.graphics.Point();
 +                final android.graphics.Point current = new android.graphics.Point();
 +                wm.getInitialDisplaySize(displayId, initial);

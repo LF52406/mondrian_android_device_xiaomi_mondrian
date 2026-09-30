@@ -20,6 +20,7 @@ public final class PartialUpdateDiagramView extends View {
     private final int mSecondary;
     private final int mPrimary;
     private boolean mPartialUpdateEnabled;
+    private boolean mKnown;
 
     public PartialUpdateDiagramView(Context context) {
         this(context, null);
@@ -39,8 +40,8 @@ public final class PartialUpdateDiagramView extends View {
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
 
-    public void setPartialUpdateEnabled(boolean enabled) {
-        if (mPartialUpdateEnabled == enabled) return;
+    public void setState(boolean known, boolean enabled) {
+        mKnown = known;
         mPartialUpdateEnabled = enabled;
         invalidate();
     }
@@ -60,9 +61,9 @@ public final class PartialUpdateDiagramView extends View {
         float radius = dp(18);
 
         drawPhone(canvas, new RectF(leftX, top, leftX + phoneW, top + phoneH),
-                true, !mPartialUpdateEnabled, radius);
+                true, mKnown && !mPartialUpdateEnabled, radius);
         drawPhone(canvas, new RectF(rightX, top, rightX + phoneW, top + phoneH),
-                false, mPartialUpdateEnabled, radius);
+                false, mKnown && mPartialUpdateEnabled, radius);
 
         float cy = top + phoneH * 0.52f;
         float x1 = leftX + phoneW + w * 0.055f;
@@ -116,7 +117,7 @@ public final class PartialUpdateDiagramView extends View {
 
         if (!full) {
             RectF changed = new RectF(card.left, card.top,
-                    card.left + card.width() * 0.52f, card.bottom);
+                    card.right, card.bottom);
             mPaint.setColor(withAlpha(MINT, selected ? 150 : 105));
             canvas.drawRect(changed, mPaint);
             mPaint.setStyle(Paint.Style.STROKE);

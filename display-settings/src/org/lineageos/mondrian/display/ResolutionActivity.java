@@ -29,10 +29,10 @@ public final class ResolutionActivity extends CollapsingToolbarBaseActivity {
             appBar.setExpanded(false, false);
         }
 
-        setTitle(R.string.resolution_title);
+        setTitle(R.string.display_mode_title);
         ActionBar actionBar = getActionBar();
         if (actionBar != null) {
-            actionBar.setTitle(R.string.resolution_title);
+            actionBar.setTitle(R.string.display_mode_title);
         }
 
         if (state == null) {

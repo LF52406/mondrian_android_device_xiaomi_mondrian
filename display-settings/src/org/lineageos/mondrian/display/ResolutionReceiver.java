@@ -25,7 +25,7 @@ public final class ResolutionReceiver extends BroadcastReceiver {
         PendingResult result = goAsync();
         ResolutionController controller = ResolutionController.get(context);
         controller.execute(() -> {
-            controller.engine.recover(recovery || added);
+            controller.recover();
             if (added) {
                 controller.backend.initializeNewUser(
                         intent.getIntExtra(Intent.EXTRA_USER_HANDLE, UserHandle.USER_NULL));
@@ -34,8 +34,7 @@ public final class ResolutionReceiver extends BroadcastReceiver {
                 controller.backend.initializeUntrackedUsers(controller.engine.knownUsers());
             }
             if (controller.engine.pending() == null) {
-                ResolutionEngine.Frame frame = controller.backend.read();
-                controller.partialUpdate.reconcile(frame.width, frame.height);
+                controller.reconcilePartial();
             }
             return null;
         }, (unused, error) -> result.finish());

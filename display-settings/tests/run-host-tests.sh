@@ -7,6 +7,7 @@ trap 'rm -rf -- "$test_classes"' EXIT
 test_source="$test_dir/../src/org/lineageos/mondrian/display"
 java com.sun.tools.javac.Main -d "$test_classes" \
     "$test_source/ResolutionEngine.java" \
+    "$test_source/ResolutionTransition.java" \
     "$test_source/StateCodec.java" \
     "$test_dir/ResolutionEngineTest.java"
 java -cp "$test_classes" org.lineageos.mondrian.display.ResolutionEngineTest

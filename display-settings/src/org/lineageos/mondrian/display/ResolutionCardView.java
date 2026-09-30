@@ -9,7 +9,6 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
-import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -67,7 +66,8 @@ public final class ResolutionCardView extends LinearLayout {
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        LayoutParams rowParams = new LayoutParams(LayoutParams.MATCH_PARENT, dp(84));
+        row.setMinimumHeight(dp(84));
+        LayoutParams rowParams = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
         rowParams.topMargin = dp(10);
         addView(row, rowParams);
 
@@ -87,13 +87,11 @@ public final class ResolutionCardView extends LinearLayout {
         text.setOrientation(VERTICAL);
         text.setGravity(Gravity.CENTER_VERTICAL);
         text.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        row.addView(text, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1f));
+        row.addView(text, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
 
         mTitle = makeText(20, true, resolveColor(android.R.attr.textColorPrimary, Color.WHITE));
         mPixels = makeText(15, false, mSecondary);
         mSummary = makeText(15, false, mSecondary);
-        mSummary.setMaxLines(2);
-        mSummary.setEllipsize(TextUtils.TruncateAt.END);
 
         text.addView(mTitle);
         text.addView(mPixels);

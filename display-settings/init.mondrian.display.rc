@@ -1,12 +1,17 @@
-# Copyright (C) 2026 The LineageOS Project
-# SPDX-License-Identifier: Apache-2.0
-#
-# The persistent property stores user intent only. MondrianDisplaySettings
-# resolves it against the active resolution and emits the runtime request.
-# init remains the only writer of the root-owned msm_drm module parameter.
+# The request generation travels app -> init -> HWC. Acknowledgements return
+# only after a real commit/retire fence and sysfs readback, never on a timer.
+on property:sys.mondrian.partial_update_request=*
+    setprop vendor.mondrian.display.request ${sys.mondrian.partial_update_request}
 
-on property:sys.mondrian.partial_update_profile=0
+on property:vendor.mondrian.display.status=*
+    setprop sys.mondrian.partial_update_status ${vendor.mondrian.display.status}
+
+# HWC requests OFF only after retiring a full composition. For ON it programs
+# the stable kernel capability first, then enables the composition policy.
+on property:vendor.mondrian.display.profile=0
     write /sys/module/msm_drm/parameters/m11a_partial_update_profile 0
+    setprop vendor.mondrian.display.profile_applied ${vendor.mondrian.display.profile_serial}:0
 
-on property:sys.mondrian.partial_update_profile=1
+on property:vendor.mondrian.display.profile=1
     write /sys/module/msm_drm/parameters/m11a_partial_update_profile 1
+    setprop vendor.mondrian.display.profile_applied ${vendor.mondrian.display.profile_serial}:1

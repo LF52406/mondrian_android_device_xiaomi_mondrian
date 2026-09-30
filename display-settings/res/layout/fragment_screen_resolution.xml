@@ -43,13 +43,13 @@
                 <org.lineageos.mondrian.display.ResolutionCardView
                     android:id="@+id/resolution_fhd"
                     android:layout_width="0dp"
-                    android:layout_height="244dp"
+                    android:layout_height="match_parent"
                     android:layout_weight="1" />
 
                 <org.lineageos.mondrian.display.ResolutionCardView
                     android:id="@+id/resolution_wqhd"
                     android:layout_width="0dp"
-                    android:layout_height="244dp"
+                    android:layout_height="match_parent"
                     android:layout_marginStart="12dp"
                     android:layout_weight="1" />
             </LinearLayout>
@@ -95,6 +95,15 @@
                     android:contentDescription="@string/partial_update_title"
                     android:showText="false" />
             </LinearLayout>
+
+            <TextView
+                android:id="@+id/partial_update_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:accessibilityLiveRegion="polite"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="15sp" />
 
             <org.lineageos.mondrian.display.PartialUpdateDiagramView
                 android:id="@+id/partial_update_diagram"

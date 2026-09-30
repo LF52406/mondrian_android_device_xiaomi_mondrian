@@ -11,11 +11,13 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 
-/** Serialized, durable preview transaction. Has no Android dependencies. */
+/** Immediate, durable resolution transaction. Has no Android dependencies. */
 final class ResolutionEngine {
     static final int NATIVE_WIDTH = 1440;
     static final int NATIVE_HEIGHT = 3200;
-    static final long PREVIEW_MS = 20_000;
+    // Process-death recovery only. A successful apply clears the journal in this call;
+    // there is no preview, confirmation window or deadline on the saved choice.
+    static final long RECOVERY_TIMEOUT_MS = 60_000;
 
     interface Backend {
         void checkCanChange() throws Exception;
@@ -56,7 +58,7 @@ final class ResolutionEngine {
                 return false;
             }
             for (Map.Entry<Integer, Integer> entry : densities.entrySet()) {
-                // A user removed during a preview no longer needs a density override.
+                // A user removed during a transaction no longer needs an override.
                 Integer density = actual.densities.get(entry.getKey());
                 if (density != null && !density.equals(entry.getValue())) return false;
             }
@@ -128,17 +130,16 @@ final class ResolutionEngine {
         mWatchdog = watchdog;
     }
 
-    synchronized Pending preview(int width) throws Exception {
+    synchronized void apply(int width) throws Exception {
         if (width != 1080 && width != NATIVE_WIDTH) {
             throw new IllegalArgumentException("Unsupported resolution");
         }
-        recover(false);
+        recover();
         mBackend.checkCanChange();
         State state = mStore.read();
-        if (state.pending != null) throw new IllegalStateException("Preview already pending");
         Frame before = mBackend.read();
         int height = width == 1080 ? 2400 : NATIVE_HEIGHT;
-        if (before.width == width && before.height == height && before.scaling == 0) return null;
+        if (before.width == width && before.height == height && before.scaling == 0) return;
 
         Map<Integer, Integer> densities = new LinkedHashMap<>();
         Map<Integer, Anchor> anchors = new LinkedHashMap<>();
@@ -159,7 +160,8 @@ final class ResolutionEngine {
         }
         Frame after = new Frame(width, height, 0, densities);
         Pending pending = new Pending(UUID.randomUUID().toString(),
-                mClock.elapsedRealtime() + PREVIEW_MS, mClock.bootCount(), before, after, anchors);
+                mClock.elapsedRealtime() + RECOVERY_TIMEOUT_MS,
+                mClock.bootCount(), before, after, anchors);
 
         // The journal and process-independent rollback alarm MUST precede the first WM mutation.
         mStore.write(new State(state.anchors, pending));
@@ -178,6 +180,8 @@ final class ResolutionEngine {
             mBackend.apply(after);
             if (!after.matches(mBackend.read())) throw new IOException("Display change incomplete");
             mBackend.checkCanChange();
+            // Save in the same operation. No UI lifecycle or later confirmation owns this step.
+            mStore.write(new State(pending.anchors, null));
         } catch (Exception failure) {
             try {
                 rollback(pending.token);
@@ -186,26 +190,8 @@ final class ResolutionEngine {
             }
             throw failure;
         }
-        return pending;
-    }
-
-    synchronized boolean confirm(String token) throws Exception {
-        State state = mStore.read();
-        Pending pending = state.pending;
-        if (pending == null || !pending.token.equals(token)) return false;
-        if (expired(pending)) {
-            rollback(token);
-            return false;
-        }
-        mBackend.checkCanChange();
-        if (!pending.after.matches(mBackend.read())) {
-            rollback(token);
-            throw new IOException("Display changed during confirmation");
-        }
-        // Commit before cancelling the alarm; a stale alarm cannot undo a committed choice.
-        mStore.write(new State(pending.anchors, null));
+        // A stale alarm only sees an empty journal and cannot undo a committed choice.
         mWatchdog.cancel();
-        return true;
     }
 
     synchronized void rollback(String token) throws Exception {
@@ -230,15 +216,16 @@ final class ResolutionEngine {
         }
     }
 
-    synchronized Pending recover(boolean forceRollback) throws Exception {
+    synchronized void recover() throws Exception {
         Pending pending = mStore.read().pending;
-        if (pending == null) return null;
-        if (forceRollback || expired(pending)) {
+        if (pending != null) {
+            // All work is serialized. A pending record seen outside apply() belongs to
+            // an interrupted operation, including legacy MRS1 preview journals.
             rollback(pending.token);
-            return null;
+        } else {
+            // Also removes the old 20-second alarm after an app upgrade.
+            mWatchdog.cancel();
         }
-        mWatchdog.schedule(pending.token, pending.deadline);
-        return pending;
     }
 
     synchronized Pending pending() throws IOException {
@@ -249,8 +236,4 @@ final class ResolutionEngine {
         return new HashSet<>(mStore.read().anchors.keySet());
     }
 
-    private boolean expired(Pending pending) {
-        return pending.boot != mClock.bootCount()
-                || mClock.elapsedRealtime() >= pending.deadline;
-    }
 }

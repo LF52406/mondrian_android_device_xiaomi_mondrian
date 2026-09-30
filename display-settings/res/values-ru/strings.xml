@@ -22,4 +22,9 @@
     <string name="resolution_custom">Другое</string>
     <string name="resolution_current">%1$s · %2$d × %3$d</string>
     <string name="resolution_search_keywords">разрешение экрана, дисплей, FHD, WQHD, 1080p, 1440p, частичное обновление, ROI</string>
+    <string name="partial_update_wqhd_only">Доступно только в WQHD+. Выбор для WQHD+ сохраняется.</string>
+    <string name="partial_update_unknown">Не удалось подтвердить состояние экрана. Повторите попытку.</string>
+    <string name="partial_update_on">Включено</string>
+    <string name="partial_update_off">Выключено</string>
+    <string name="display_applying">Применение…</string>
 </resources>

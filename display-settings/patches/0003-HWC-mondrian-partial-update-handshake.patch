@@ -1,0 +1,324 @@
+diff --git a/composer/Android.bp b/composer/Android.bp
+index 918dd5e..6ad79f1 100644
+--- a/composer/Android.bp
++++ b/composer/Android.bp
+@@ -95,3 +95,9 @@ prebuilt_etc_xml {
+     sub_dir: "vintf/manifest",
+     vendor: true,
+ }
++
++// Required by MondrianDisplaySettings: fail the build if its HWC companion is absent.
++phony {
++    name: "mondrian_display_hwc_integration",
++    required: ["vendor.qti.hardware.display.composer-service"],
++}
+diff --git a/composer/hwc_display.h b/composer/hwc_display.h
+index 97465ee..380822b 100644
+--- a/composer/hwc_display.h
++++ b/composer/hwc_display.h
+@@ -203,6 +203,14 @@ class HWCDisplay : public DisplayEventHandler {
+   virtual HWC2::Error SetFrameDumpConfig(uint32_t count, uint32_t bit_mask_layer_type,
+                                          int32_t format, CwbConfig &cwb_config);
+   virtual DisplayError SetMaxMixerStages(uint32_t max_mixer_stages);
++  DisplayError InvalidateForMondrianPartialUpdate() {
++    DisplayError error = DisablePartialUpdateOneFrame();
++    if (error != kErrorNone) return error;
++    validate_done_ = false;
++    layer_stack_invalid_ = true;
++    pending_commit_ = true;
++    return kErrorNone;
++  }
+   virtual DisplayError ControlPartialUpdate(bool enable, uint32_t *pending) {
+     return kErrorNotSupported;
+   }
+diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
+new file mode 100644
+index 0000000..9dfdf4c
+--- /dev/null
++++ b/composer/hwc_mondrian.cpp
+@@ -0,0 +1,144 @@
++/* Copyright (C) 2026 The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++#include "hwc_session.h"
++
++#include <cutils/properties.h>
++#include <chrono>
++#include <fstream>
++#include <thread>
++
++namespace sdm {
++namespace {
++constexpr char kRequest[] = "vendor.mondrian.display.request";
++constexpr char kStatus[] = "vendor.mondrian.display.status";
++constexpr char kAllowed[] = "vendor.mondrian.display.pu_allowed";
++constexpr char kProfile[] = "vendor.mondrian.display.profile";
++constexpr char kSerial[] = "vendor.mondrian.display.profile_serial";
++constexpr char kApplied[] = "vendor.mondrian.display.profile_applied";
++constexpr char kProfilePath[] = "/sys/module/msm_drm/parameters/m11a_partial_update_profile";
++
++std::string ReadProperty(const char *name) {
++  char value[PROPERTY_VALUE_MAX] = {};
++  property_get(name, value, "");
++  return value;
++}
++
++bool IsRequest(const std::string &request) {
++  if (request.size() != 38 || request[36] != ':' ||
++      (request[37] != '0' && request[37] != '1')) return false;
++  for (size_t i = 0; i < 36; ++i) {
++    if (i == 8 || i == 13 || i == 18 || i == 23) {
++      if (request[i] != '-') return false;
++    } else if (!((request[i] >= '0' && request[i] <= '9') ||
++                 (request[i] >= 'a' && request[i] <= 'f'))) {
++      return false;
++    }
++  }
++  return true;
++}
++
++bool ProfileApplied(const std::string &request) {
++  if (ReadProperty(kApplied) != request) return false;
++  int actual = -1;
++  std::ifstream stream(kProfilePath);
++  return (stream >> actual) && actual == request.back() - '0';
++}
++
++bool SetProfile(const std::string &request, int profile) {
++  // One outstanding init action at a time. Even after a timeout, drain its exact
++  // acknowledgement before another action can be queued. A late old ON write
++  // must never follow an acknowledged OFF.
++  static std::string pending = [] {
++    const std::string old = ReadProperty(kSerial) + ":" + ReadProperty(kProfile);
++    return IsRequest(old) ? old : std::string();
++  }();
++  if (!pending.empty()) {
++    if (ReadProperty(kApplied) != pending) return false;
++    pending.clear();
++  }
++  if (ReadProperty(kRequest) != request) return false;
++  pending = request;
++  if (property_set(kSerial, request.substr(0, 36).c_str()) ||
++      property_set(kProfile, "") || property_set(kProfile, profile ? "1" : "0")) return false;
++  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(600);
++  do {
++    if (ReadProperty(kApplied) == request) {
++      pending.clear();
++      return ProfileApplied(request) && ReadProperty(kRequest) == request;
++    }
++    std::this_thread::sleep_for(std::chrono::milliseconds(10));
++  } while (std::chrono::steady_clock::now() < deadline);
++  return false;
++}
++}  // namespace
++
++void HWCSession::StartMondrianPartialUpdate() {
++  if (!property_get_bool("ro.vendor.mondrian.display_control", false)) return;
++  mondrian_stop_ = false;
++  mondrian_thread_ = std::thread([this] {
++    // Do not replay an old ON request after composer restarts. The owner must reconcile.
++    std::string previous = ReadProperty(kRequest);
++    property_set(kStatus, "offline");
++    while (!mondrian_stop_) {
++      const std::string request = ReadProperty(kRequest);
++      if (request != previous && IsRequest(request)) {
++        previous = request;
++        const bool enable = request.back() == '1';
++        // Disable composition first. Expanding only the DSI ROI would be unsafe.
++        bool ok = property_set(kAllowed, "0") == 0 && MondrianCommit(false);
++        if (ok) ok = SetProfile(request, enable ? 1 : 0);
++        if (ok && enable && ReadProperty(kRequest) == request) {
++          ok = property_set(kAllowed, "1") == 0 && MondrianCommit(true);
++        }
++        if (ReadProperty(kRequest) != request) {
++          property_set(kAllowed, "0");
++          continue;
++        }
++        if (!ok) {
++          // Never enable from an unacknowledged request. Leave kernel geometry alone
++          // until a later OFF request has retired a valid full composition.
++          property_set(kAllowed, "0");
++        }
++        property_set(kStatus, (request + (ok ? ":ok" : ":error")).c_str());
++      }
++      // Idle request polling only; no display operation is acknowledged by elapsed time.
++      std::this_thread::sleep_for(std::chrono::milliseconds(50));
++    }
++  });
++}
++
++void HWCSession::StopMondrianPartialUpdate() {
++  mondrian_stop_ = true;
++  if (mondrian_thread_.joinable()) mondrian_thread_.join();
++}
++
++bool HWCSession::MondrianCommit(bool enable) {
++  std::shared_ptr<Fence> fence;
++  {
++    Locker::SequenceWaitScopeLock lock(locker_[HWC_DISPLAY_PRIMARY], 1200);
++    if (lock.IsError() || mondrian_stop_) return false;
++    auto *display = hwc_display_[HWC_DISPLAY_PRIMARY];
++    if (!display || pending_power_mode_[HWC_DISPLAY_PRIMARY]) return false;
++    uint32_t pending = 0;
++    if (display->ControlPartialUpdate(enable, &pending) != kErrorNone ||
++        display->InvalidateForMondrianPartialUpdate() != kErrorNone) return false;
++    // A new validate is required even when false -> false would be a no-op.
++    mondrian_fence_ = nullptr;
++    mondrian_waiting_ = true;
++    callbacks_.Refresh(HWC_DISPLAY_PRIMARY);
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1200);
++    while (mondrian_waiting_ && !mondrian_stop_) {
++      auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
++          deadline - std::chrono::steady_clock::now()).count();
++      if (remaining <= 0) break;
++      locker_[HWC_DISPLAY_PRIMARY].WaitFinite(static_cast<uint32_t>(remaining));
++    }
++    mondrian_waiting_ = false;
++    fence = mondrian_fence_;
++    mondrian_fence_ = nullptr;
++  }
++  // A skipped present, power transition or null fence is not proof of a frame.
++  return fence && !mondrian_stop_ && Fence::Wait(fence, 400) == 0;
++}
++}  // namespace sdm
+diff --git a/composer/hwc_session.cpp b/composer/hwc_session.cpp
+index 32e671a..b32a08b 100644
+--- a/composer/hwc_session.cpp
++++ b/composer/hwc_session.cpp
+@@ -167,6 +167,10 @@ HWCSession *HWCSession::GetInstance() {
+ int HWCSession::Init() {
+   SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
+   DLOGI("Initializing HWCSession");
++  if (property_get_bool("ro.vendor.mondrian.display_control", false)) {
++    property_set("vendor.mondrian.display.pu_allowed", "0");
++    property_set("vendor.mondrian.display.status", "offline");
++  }
+ 
+   int status = -EINVAL;
+   const char *qservice_name = "display.qservice";
+@@ -260,9 +264,11 @@ void HWCSession::PostInit() {
+   // This avoids deadlock between composer and its clients.
+   auto hwc_display = hwc_display_[HWC_DISPLAY_PRIMARY];
+   hwc_display->PostInit();
++  StartMondrianPartialUpdate();
+ }
+ 
+ int HWCSession::Deinit() {
++  StopMondrianPartialUpdate();
+   // Destroy all connected displays
+   DestroyDisplay(&map_info_primary_);
+ 
+@@ -861,6 +867,11 @@ int32_t HWCSession::PresentDisplay(hwc2_display_t display, shared_ptr<Fence> *ou
+ void HWCSession::PostCommitLocked(hwc2_display_t display, shared_ptr<Fence> &retire_fence) {
+   PerformIdleStatusCallback(display);
+ 
++  if (display == HWC_DISPLAY_PRIMARY && mondrian_waiting_) {
++    mondrian_fence_ = retire_fence;
++    mondrian_waiting_ = false;
++  }
++
+   if (clients_waiting_for_commit_[display].any()) {
+     retire_fence_[display] = retire_fence;
+     commit_error_[display] = 0;
+diff --git a/composer/hwc_session.h b/composer/hwc_session.h
+index 270275e..fe3fcdd 100644
+--- a/composer/hwc_session.h
++++ b/composer/hwc_session.h
+@@ -42,6 +42,8 @@
+ #include <vector>
+ #include <queue>
+ #include <utility>
++#include <atomic>
++#include <thread>
+ #include <future>   // NOLINT
+ #include <map>
+ #include <unordered_map>
+@@ -596,6 +598,14 @@ class HWCSession : hwc2_device_t, HWCUEventListener, public qClient::BnQClient,
+   void PostCommitUnlocked(hwc2_display_t display, const shared_ptr<Fence> &retire_fence,
+                           HWC2::Error status);
+   void PostCommitLocked(hwc2_display_t display, shared_ptr<Fence> &retire_fence);
++  void StartMondrianPartialUpdate();
++  void StopMondrianPartialUpdate();
++  bool MondrianCommit(bool enable);
++  std::atomic<bool> mondrian_stop_{false};
++  std::thread mondrian_thread_;
++  bool mondrian_waiting_ = false;  // protected by primary display locker
++  std::shared_ptr<Fence> mondrian_fence_;
++
+   int WaitForCommitDone(hwc2_display_t display, int client_id);
+   int WaitForCommitDoneAsync(hwc2_display_t display, int client_id);
+   void NotifyDisplayAttributes(hwc2_display_t display, hwc2_config_t config);
+diff --git a/sdm/include/utils/locker.h b/sdm/include/utils/locker.h
+index 4b3f3c6..f21545d 100644
+--- a/sdm/include/utils/locker.h
++++ b/sdm/include/utils/locker.h
+@@ -100,6 +100,28 @@ class Locker {
+       locker_.Unlock();
+     }
+ 
++    // Bounded clients must not wait forever for a validate/present sequence
++    // abandoned by a disconnected composer client. Existing callers are unchanged.
++    SequenceWaitScopeLock(Locker& locker, uint32_t timeout_ms)
++        : locker_(locker), error_(false) {
++      locker_.Lock();
++      struct timespec deadline;
++      if (clock_gettime(CLOCK_MONOTONIC, &deadline)) {
++        error_ = true;
++        return;
++      }
++      uint64_t ns = static_cast<uint64_t>(deadline.tv_nsec) + timeout_ms * 1000000ULL;
++      deadline.tv_sec += static_cast<time_t>(ns / 1000000000ULL);
++      deadline.tv_nsec = ns % 1000000000ULL;
++      while (locker_.sequence_wait_ == 1) {
++        if (pthread_cond_timedwait(&locker_.condition_, &locker_.mutex_, &deadline)) {
++          error_ = true;
++          break;
++        }
++        error_ = (locker_.sequence_wait_ == -1);
++      }
++    }
++
+     bool IsError() {
+       return error_;
+     }
+@@ -176,4 +198,3 @@ class Locker {
+ }  // namespace sdm
+ 
+ #endif  // __LOCKER_H__
+-
+diff --git a/sdm/libs/core/display_base.cpp b/sdm/libs/core/display_base.cpp
+index f04fd6b..7ae84dd 100644
+--- a/sdm/libs/core/display_base.cpp
++++ b/sdm/libs/core/display_base.cpp
+@@ -64,6 +64,7 @@
+  */
+ 
+ #include <stdio.h>
++#include <cutils/properties.h>
+ #include <malloc.h>
+ #include <utils/constants.h>
+ #include <utils/debug.h>
+@@ -895,7 +896,10 @@ DisplayError DisplayBase::Prepare(LayerStack *layer_stack) {
+   }
+   // TODO(user): Temporary changes, to be removed when DRM driver supports
+   // Partial update with Destination scaler enabled.
+-  if (!partial_update_control_ || disable_pu_one_frame_ ||
++  const bool mondrian_off = display_type_ == kBuiltIn &&
++      property_get_bool("ro.vendor.mondrian.display_control", false) &&
++      !property_get_bool("vendor.mondrian.display.pu_allowed", false);
++  if (mondrian_off || !partial_update_control_ || disable_pu_one_frame_ ||
+       disable_pu_on_dest_scaler_) {
+     comp_manager_->ControlPartialUpdate(display_comp_ctx_, false /* enable */);
+     disable_pu_one_frame_ = false;
+@@ -1598,7 +1602,10 @@ DisplayError DisplayBase::PostCommit(HWLayersInfo *hw_layers_info) {
+   rc_prepared_ = false;
+   avoid_qync_mode_change_ = false;
+ 
+-  if (partial_update_control_) {
++  if (partial_update_control_ &&
++      !(display_type_ == kBuiltIn &&
++        property_get_bool("ro.vendor.mondrian.display_control", false) &&
++        !property_get_bool("vendor.mondrian.display.pu_allowed", false))) {
+     comp_manager_->ControlPartialUpdate(display_comp_ctx_, true /* enable */);
+   }
+ 

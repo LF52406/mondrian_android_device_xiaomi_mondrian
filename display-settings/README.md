@@ -1,147 +1,92 @@
 # Mondrian display settings
 
-System integration for **Settings → Display → Screen resolution** on POCO F5 Pro
-(`mondrian`). The module owns the logical FHD+/WQHD+ selector and the user-facing
-control for the existing M11A Partial Update path.
+Android 17, POCO F5 Pro / M11A. The two existing cards switch the logical display
+between 1080×2400 and 1440×3200; physical panel timing remains 1440×3200.
 
-| Choice | Logical Android size | Native panel timing |
-| --- | --- | --- |
-| FHD+ | 1080 × 2400 | 1440 × 3200 |
-| WQHD+ | 1440 × 3200 | 1440 × 3200 |
+A tap applies and saves immediately. There is no preview, confirmation dialog or
+20-second revert. The atomic MRS1 journal, rational density anchors and full-user
+densities are preserved. The recovery alarm covers **only an unfinished operation**;
+a completed journal cannot be rolled back by a stale alarm. Existing pending preview
+journals are recovered once through the same guarded transition.
 
-Changing resolution uses WindowManager logical size and density. It does not add a
-new physical display mode or change the panel's native timing.
+Partial Update is opt-in and available only in WQHD+. FHD+ uses profile 0 and keeps
+the WQHD+ preference for the return transition. An absent preference means OFF.
+The Switch shows kernel state; text and the neutral diagram distinguish an
+unverified state from an acknowledged OFF. Cards, artwork and card press animation
+are retained, with flexible text height and a full-width explanatory SAFE band.
 
-## UI
+## Required integration
 
-The page uses a custom Settings-themed layout rather than the old preference list.
-
-- FHD+ and WQHD+ are full-card radio targets.
-- The selected card is derived from the actual WindowManager size.
-- Card presses use a short scale animation without consuming the normal click or
-  accessibility path.
-- A successful resolution transaction is confirmed immediately. There is no
-  user-facing 20-second confirmation dialog.
-- The existing transaction journal, exact rollback alarm and recovery paths remain
-  in place for interrupted or failed changes.
-- The Partial Update illustration is informational only. Its only control is the
-  standard Switch beside the section title.
-- English and Russian strings are Android resources.
-
-The supplied landscape artwork is packaged as
-`res/drawable-nodpi/resolution_landscape_preview.webp`. WQHD+ draws it normally;
-FHD+ uses a deliberately pixelated preview to communicate the visual difference.
-
-## Resolution backend and recovery
-
-Before a real display mutation, the previous size, scaling mode and full-user
-densities are stored in the existing atomic journal. Size and density are still
-applied through the existing typed WindowManager Binder APIs.
-
-The new UI runs `preview()` and `confirm()` consecutively on the controller's
-single worker. Density-driven Activity recreation does not expose an intermediate
-confirmation UI. If the process is interrupted before confirmation, the durable
-journal/alarm/boot recovery path restores the previous state.
-
-Integer density anchors and multi-user density preservation remain unchanged.
-Only the unlocked foreground owner can change the shared logical display size.
-
-The required SettingsLib companion patch is also unchanged. It keeps the FHD+
-logical default density proportional to the native WQHD+ density, so Display size
-and Reset do not change perceived UI scale.
-
-Apply it before building:
+Apply the matching kernel change and both companion patches before building:
 
 ```bash
-bash device/xiaomi/mondrian/display-settings/apply-settingslib-patch.sh
-m Settings MondrianDisplaySettings
+bash device/xiaomi/mondrian/display-settings/apply-display-patches.sh "$ANDROID_BUILD_TOP"
+m Settings MondrianDisplaySettings vendor.qti.hardware.display.composer-service
 ```
 
-## M11A Partial Update
+An alternative HWC checkout can be passed as the second argument. Both patches
+are checked before either is applied. The script also supports upgrading the old
+SettingsLib patch and is idempotent. It does not apply the BootAnimation patch.
+The app requires `mondrian_display_hwc_integration`, supplied by the HWC companion;
+a build with an unpatched HWC fails instead of silently using the old sysfs bridge.
 
-The UI uses the already existing kernel implementation:
+HWC patch baseline: LineageOS `android_hardware_qcom_display`,
+`lineage-24.0-caf-sm8450`, `aea8d60119598d755f29e2e15312b4ff491d1808`.
+SettingsLib baseline: LineageOS `android_frameworks_base`, `lineage-24.0`,
+`d00cd79b907ed2df8049eb57b5da540bd8b91d04`.
+These are integration baselines, not an assertion about a particular ROM manifest.
 
-```text
-/sys/module/msm_drm/parameters/m11a_partial_update_profile
-0 = disabled / full-frame
-1 = SAFE full-width DSC-aligned ROI
-2 = DSC-slice development profile
-```
+## Transition contract
 
-The user-facing Switch exposes only profiles 0 and 1. Profile 2 is not selectable
-from Settings.
+1. Persist the before/after journal and arm process-death recovery.
+2. Request a fresh HWC full composition. Invalidate its old validation and wait for
+   a real non-null retire fence, then ask init to write kernel profile 0.
+3. Apply WM size, scaling and densities. Flush scheduled WM placement and request
+   another full composition and retire fence. Check WM state and foreground owner.
+4. Commit the journal. Only then reconcile the saved WQHD+ PU preference.
 
-Partial Update is intentionally available only at WQHD+ (1440 × 3200):
+Apply, rollback and boot recovery share `ResolutionTransition`. Only the owner
+process can mutate the shared display. UI writes also require the unlocked
+foreground owner; secondary-user refreshes are read-only.
 
-- at WQHD+, Switch ON requests SAFE profile 1 and Switch OFF requests profile 0;
-- at FHD+, the runtime profile is forced to 0 and the Switch is disabled/off;
-- the user's WQHD+ preference is stored separately, so returning from FHD+ restores
-  the previous ON/OFF preference when possible.
+The generation-tagged handshake is app → init → HWC → init/sysfs. HWC disables its
+PU composition policy before requesting kernel OFF; kernel ROI expansion alone
+cannot reconstruct cropped planes. Enabling programs profile 1 first, then permits
+PU in HWC. Normal Qualcomm full-frame fallbacks remain in force. Every request
+requires its own fence and init acknowledgement. A timed-out init action must be
+drained before another kernel write is queued, preventing a late ON after OFF.
+HWC restart closes its PU gate and invalidates acknowledgement; it does not replay
+an old ON request. Reconciliation is retried on the next owner recovery/resume.
 
-The app does **not** write the root-owned module parameter directly. It writes only
-the dedicated Mondrian system properties. `init.mondrian.display.rc` performs the
-sysfs write, and the app reads the real module parameter back before reporting a
-successful Switch change. Device-specific SELinux labels restrict this bridge to
-the dedicated property and sysfs node.
+Kernel starts at profile 0. Capabilities remain stable, SAFE alignment remains
+1440×32, DSC remains 720×32. Full-frame policy is resolved before LM/DSC/DSI and
+marks ROI dirty when retained rectangles need reprogramming. Profile 2 remains a
+development-only kernel setting and is never offered in Settings.
 
-A failure to disable Partial Update before entering FHD+ aborts that resolution
-change. After a resolution has already committed, a failure to restore the optional
-WQHD+ Partial Update preference does not falsely report that the resolution change
-failed; the UI displays the actual sysfs state and later resume/boot reconciliation
-can retry it.
-
-## Search and security
-
-The Settings entry, search provider and dynamic resolution summary remain in the
-same `MondrianDisplaySettings` system_ext app. The Activity remains signature
-protected. The exported search provider is read-only and protected by
-`READ_SEARCH_INDEXABLES`.
-
-The app requires no root, shell command execution, network access or shared system
-UID. Hardware mutation for Partial Update is delegated to init through the
-device-specific property bridge.
-
-## Verification
-
-The existing Android-independent transaction tests are still applicable:
+## Checks
 
 ```bash
 bash device/xiaomi/mondrian/display-settings/tests/run-host-tests.sh
 ```
 
-A full Soong build and physical-device validation are still required for the custom
-Android UI, init/property bridge and SELinux policy.
+Host tests cover immediate persistence, stale alarms, legacy journals, density
+rounding, owner loss, both directions, guard/fence failure, partial WM failure,
+process death and journal/rollback failures. They do not replace a target Soong,
+SELinux or kernel build, nor M11A validation.
 
-Recommended device checks:
+On device, test all four resolution/preference combinations, reboot and process
+interruption. Correlate HWC composition, plane rectangles, LM, DSC, DSI and retire
+fences: acknowledged OFF must transmit full native 1440×3200, including logical
+FHD. ON may use full-width bands aligned to 32 lines or normal full-frame fallback.
+WM readback and profile alone do not prove that hardware contract. Check RU/EN,
+large fonts, selected states and accessibility on the actual Settings theme.
 
-1. Build `Settings` and `MondrianDisplaySettings`; verify the Display entry and
-   Settings search in Russian and English, light/dark theme and larger font sizes.
-2. Switch WQHD+ → FHD+ and FHD+ → WQHD+ by tapping anywhere on each card. Confirm
-   there is no confirmation dialog and the selected border/radio follows `wm size`.
-3. In FHD+, verify the module parameter is 0 and the Partial Update Switch is
-   disabled/off. Return to WQHD+ and verify the stored user preference is restored.
-4. In WQHD+, toggle Partial Update both ways and verify the Switch only changes after
-   the module parameter reaches the requested 0/1 value.
-5. Kill/restart Settings and reboot in both logical resolutions. Re-open the page and
-   verify both resolution and Partial Update are reconstructed from actual system
-   state rather than stale View state.
-6. Test owner/secondary/guest handling, Display size/reset, rotation, UDFPS,
-   AOD/LHBM, camera, screenshots, recording and 60/90/120 Hz independently.
-
-Read-only diagnostics:
+Read-only state:
 
 ```bash
 adb shell wm size
 adb shell wm density
 adb shell cat /sys/module/msm_drm/parameters/m11a_partial_update_profile
+adb shell getprop sys.mondrian.partial_update_status
 adb shell getprop persist.sys.mondrian.partial_update_enabled
-adb logcat -d -s MondrianResolution MondrianPartialUpdate WindowManager AndroidRuntime
-```
-
-Manual resolution recovery remains:
-
-```bash
-adb shell wm size reset
-adb shell wm density reset
-adb shell wm scaling auto
 ```

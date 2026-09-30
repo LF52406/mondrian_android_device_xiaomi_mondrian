@@ -3,3 +3,4 @@
 get_prop(platform_app, mondrian_display_prop)
 set_prop(platform_app, mondrian_display_prop)
 allow platform_app sysfs_mondrian_partial_update:file r_file_perms;
+get_prop(platform_app, mondrian_display_status_prop)

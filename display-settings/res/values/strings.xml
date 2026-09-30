@@ -22,4 +22,9 @@
     <string name="resolution_custom">Custom</string>
     <string name="resolution_current">%1$s · %2$d × %3$d</string>
     <string name="resolution_search_keywords">screen resolution, display, FHD, WQHD, 1080p, 1440p, partial update, ROI</string>
+    <string name="partial_update_wqhd_only">Available only at WQHD+. Your WQHD+ preference is kept.</string>
+    <string name="partial_update_unknown">Display state could not be verified. Try again.</string>
+    <string name="partial_update_on">On</string>
+    <string name="partial_update_off">Off</string>
+    <string name="display_applying">Applying…</string>
 </resources>

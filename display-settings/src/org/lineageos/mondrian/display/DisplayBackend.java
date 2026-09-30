@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-final class DisplayBackend implements ResolutionEngine.Backend {
+final class DisplayBackend implements ResolutionTransition.Display {
     private static final String TAG = ResolutionController.TAG;
 
     private final Context mContext;
@@ -135,7 +135,7 @@ final class DisplayBackend implements ResolutionEngine.Backend {
 
     @Override
     public void apply(ResolutionEngine.Frame frame) throws Exception {
-        if (!supported()) throw new IllegalStateException("Unsupported display");
+        checkMutationProcess();
         // All calls are typed Binder APIs; no shell, root, hidden transaction IDs or properties.
         mWm.setForcedDisplayScalingMode(Display.DEFAULT_DISPLAY, frame.scaling);
         if (frame.width == ResolutionEngine.NATIVE_WIDTH
@@ -156,6 +156,20 @@ final class DisplayBackend implements ResolutionEngine.Backend {
         }
     }
 
+    @Override
+    public void flushTransactions() throws Exception {
+        // WM placement/SF transaction flush, followed by an HWC fence in ResolutionTransition.
+        mWm.syncInputTransactions(true);
+    }
+
+    @Override
+    public void checkMutationProcess() throws Exception {
+        if (UserHandle.myUserId() != UserHandle.USER_SYSTEM) {
+            throw new SecurityException("Display mutation requires the owner process");
+        }
+        if (!supported()) throw new IllegalStateException("Unsupported display");
+    }
+
     private void setDensity(int userId, int density) throws Exception {
         if (density == mWm.getInitialDisplayDensity(Display.DEFAULT_DISPLAY)) {
             mWm.clearForcedDisplayDensityForUser(Display.DEFAULT_DISPLAY, userId);
@@ -165,7 +179,8 @@ final class DisplayBackend implements ResolutionEngine.Backend {
     }
 
     void initializeNewUser(int userId) throws Exception {
-        if (!supported() || userId < 0) return;
+        checkMutationProcess();
+        if (userId < 0) return;
         UserInfo user = mUsers.getUserInfo(userId);
         if (user == null || user.isProfile()) return;
         Point size = new Point();

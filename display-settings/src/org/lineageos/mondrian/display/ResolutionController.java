@@ -4,6 +4,7 @@
 package org.lineageos.mondrian.display;
 
 import android.app.AlarmManager;
+import android.app.ActivityManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
@@ -51,9 +52,10 @@ final class ResolutionController {
 
     private ResolutionController(Context context) {
         mContext = context.getApplicationContext().createDeviceProtectedStorageContext();
-        backend = new DisplayBackend(mContext);
         partialUpdate = new PartialUpdateBackend();
-        engine = new ResolutionEngine(backend, new Journal(mContext),
+        backend = new DisplayBackend(mContext);
+        engine = new ResolutionEngine(new ResolutionTransition(backend,
+                partialUpdate::ensureDisabledForTransition), new Journal(mContext),
                 new ResolutionEngine.Clock() {
                     public long elapsedRealtime() { return SystemClock.elapsedRealtime(); }
                     public int bootCount() {
@@ -67,6 +69,50 @@ final class ResolutionController {
             users.addAction(Intent.ACTION_USER_ADDED);
             mContext.registerReceiver(new ResolutionReceiver(), users,
                     Context.RECEIVER_NOT_EXPORTED);
+        }
+    }
+
+    void applyResolution(int width) throws Exception {
+        backend.checkCanChange();
+        engine.apply(width);
+        // Resolution is already committed. Optional PU restoration has its own UI state.
+        try {
+            reconcilePartial();
+        } catch (Exception e) {
+            Log.w(TAG, "Resolution saved; Partial Update restoration failed", e);
+        }
+    }
+
+    void recover() throws Exception {
+        backend.checkMutationProcess();
+        engine.recover();
+        reconcilePartial();
+    }
+
+    void setPartialUpdateEnabled(boolean enabled) throws Exception {
+        backend.checkCanChange();
+        engine.recover();
+        backend.checkCanChange();
+        ResolutionEngine.Frame frame = backend.read();
+        partialUpdate.setUserEnabled(enabled, frame.width, frame.height);
+        if (ActivityManager.getCurrentUser() != UserHandle.USER_SYSTEM) {
+            partialUpdate.ensureDisabledForTransition();
+            throw new SecurityException("Foreground owner changed during display operation");
+        }
+    }
+
+    void reconcilePartial() throws Exception {
+        backend.checkMutationProcess();
+        // Never enable while a failed/unreadable journal could still require rollback.
+        if (engine.pending() != null) {
+            partialUpdate.ensureDisabledForTransition();
+            return;
+        }
+        ResolutionEngine.Frame frame = backend.read();
+        partialUpdate.reconcile(frame.width, frame.height,
+                ActivityManager.getCurrentUser() == UserHandle.USER_SYSTEM);
+        if (ActivityManager.getCurrentUser() != UserHandle.USER_SYSTEM) {
+            partialUpdate.ensureDisabledForTransition();
         }
     }
 

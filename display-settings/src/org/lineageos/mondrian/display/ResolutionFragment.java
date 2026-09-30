@@ -5,18 +5,16 @@ package org.lineageos.mondrian.display;
 
 import android.os.Bundle;
 import android.os.UserHandle;
-import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Switch;
 import android.widget.Toast;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
-
-import java.io.IOException;
 
 public final class ResolutionFragment extends Fragment {
     private ResolutionController mController;
@@ -24,6 +22,7 @@ public final class ResolutionFragment extends Fragment {
     private ResolutionCardView mWqhd;
     private Switch mPartialSwitch;
     private PartialUpdateDiagramView mPartialDiagram;
+    private TextView mPartialStatus;
 
     private boolean mBusy;
     private boolean mAllowed;
@@ -44,6 +43,7 @@ public final class ResolutionFragment extends Fragment {
         mWqhd = view.findViewById(R.id.resolution_wqhd);
         mPartialSwitch = view.findViewById(R.id.partial_update_switch);
         mPartialDiagram = view.findViewById(R.id.partial_update_diagram);
+        mPartialStatus = view.findViewById(R.id.partial_update_status);
 
         mFhd.bind(
                 getString(R.string.resolution_fhd_title),
@@ -60,6 +60,10 @@ public final class ResolutionFragment extends Fragment {
         mWqhd.setOnClickListener(v -> applyResolution(1440));
         mPartialSwitch.setOnCheckedChangeListener((button, checked) -> {
             if (!mUpdatingSwitch) {
+                // Switch reflects acknowledged state while the request is in flight.
+                mUpdatingSwitch = true;
+                button.setChecked(!checked);
+                mUpdatingSwitch = false;
                 setPartialUpdateEnabled(checked);
             }
         });
@@ -77,34 +81,7 @@ public final class ResolutionFragment extends Fragment {
         if (mBusy || !mAllowed) return;
 
         run(R.string.resolution_error, () -> {
-            ResolutionEngine.Frame before = mController.backend.read();
-            int targetHeight = width == 1080 ? 2400 : ResolutionEngine.NATIVE_HEIGHT;
-            boolean changingResolution = before.width != width
-                    || before.height != targetHeight;
-            if (changingResolution) {
-                // Every real resolution transaction starts from verified full-frame mode.
-                mController.partialUpdate.ensureDisabledForTransition();
-            }
-
-            try {
-                ResolutionEngine.Pending pending = mController.engine.preview(width);
-                if (pending != null && !mController.engine.confirm(pending.token)) {
-                    throw new IOException("Resolution preview could not be confirmed");
-                }
-            } catch (Exception failure) {
-                try {
-                    ResolutionEngine.Frame actual = mController.backend.read();
-                    mController.partialUpdate.reconcile(actual.width, actual.height);
-                } catch (Exception restoreFailure) {
-                    failure.addSuppressed(restoreFailure);
-                }
-                throw failure;
-            }
-
-            ResolutionEngine.Frame actual = mController.backend.read();
-            // Once the resolution transaction is committed, failure to restore the optional
-            // WQHD Partial Update preference must not be misreported as a resolution failure.
-            reconcilePartialBestEffort(actual);
+            mController.applyResolution(width);
             return readUi();
         });
     }
@@ -116,9 +93,7 @@ public final class ResolutionFragment extends Fragment {
         }
 
         run(R.string.partial_update_error, () -> {
-            ResolutionEngine.Frame frame = mController.backend.read();
-            mController.partialUpdate.setUserEnabled(
-                    enabled, frame.width, frame.height);
+            mController.setPartialUpdateEnabled(enabled);
             return readUi();
         });
     }
@@ -128,24 +103,10 @@ public final class ResolutionFragment extends Fragment {
 
         run(R.string.resolution_error, () -> {
             if (UserHandle.myUserId() == UserHandle.USER_SYSTEM) {
-                // Immediate-confirm operations are serialized on ResolutionController's single
-                // worker. A pending transaction observed by this later refresh is interrupted
-                // state and should be restored, not presented as a confirmation dialog.
-                mController.engine.recover(true);
+                mController.recover();
             }
-            ResolutionEngine.Frame frame = mController.backend.read();
-            reconcilePartialBestEffort(frame);
             return readUi();
         });
-    }
-
-    private void reconcilePartialBestEffort(ResolutionEngine.Frame frame) {
-        try {
-            mController.partialUpdate.reconcile(frame.width, frame.height);
-        } catch (Exception e) {
-            Log.w(ResolutionController.TAG,
-                    "Unable to reconcile Partial Update with the active resolution", e);
-        }
     }
 
     private Ui readUi() throws Exception {
@@ -198,9 +159,15 @@ public final class ResolutionFragment extends Fragment {
         mWqhd.setChecked(ui.frame.width == 1440 && ui.frame.height == 3200);
 
         mUpdatingSwitch = true;
-        mPartialSwitch.setChecked(ui.partial.available && ui.partial.enabled);
+        mPartialSwitch.setChecked(ui.partial.enabled);
         mUpdatingSwitch = false;
-        mPartialDiagram.setPartialUpdateEnabled(ui.partial.enabled);
+        mPartialDiagram.setState(ui.partial.verified, ui.partial.enabled);
+        int status = !ui.partial.verified ? R.string.partial_update_unknown
+                : (!ui.partial.available && ui.partial.enabled) ? R.string.partial_update_error
+                : !ui.partial.available ? R.string.partial_update_wqhd_only
+                : ui.partial.enabled ? R.string.partial_update_on : R.string.partial_update_off;
+        mPartialStatus.setText(status);
+        mPartialSwitch.setStateDescription(getString(status));
 
         updateEnabled();
     }
@@ -209,6 +176,9 @@ public final class ResolutionFragment extends Fragment {
         boolean cardsEnabled = mAllowed && !mBusy;
         if (mFhd != null) mFhd.setEnabled(cardsEnabled);
         if (mWqhd != null) mWqhd.setEnabled(cardsEnabled);
+        if (mPartialStatus != null && mBusy) {
+            mPartialStatus.setText(R.string.display_applying);
+        }
         if (mPartialSwitch != null) {
             mPartialSwitch.setEnabled(mAllowed && !mBusy && mPartialAvailable);
         }
