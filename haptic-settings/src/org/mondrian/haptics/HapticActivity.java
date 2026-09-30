@@ -163,7 +163,9 @@ public final class HapticActivity extends Activity implements SettingsStore.List
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
         int appearance = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
                 | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
-        getWindow().getInsetsController().setSystemBarsAppearance(night ? 0 : appearance, appearance);
+        // Create the decor before requesting its controller during Activity startup.
+        getWindow().getDecorView().getWindowInsetsController().setSystemBarsAppearance(
+                night ? 0 : appearance, appearance);
     }
 
     private void render() {
