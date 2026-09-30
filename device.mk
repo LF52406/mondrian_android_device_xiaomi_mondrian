@@ -11,9 +11,6 @@ $(call inherit-product, device/xiaomi/sm8450-common/common.mk)
 # Inherit from the proprietary version
 $(call inherit-product, vendor/xiaomi/mondrian/mondrian-vendor.mk)
 
-# Xiaomi CIT diagnostics
-$(call inherit-product, packages/apps/MiuiCit/miuicit.mk)
-
 # Audio
 PRODUCT_PACKAGES += \
     firmware_aw_cali.bin_symlink
