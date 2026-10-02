@@ -1,12 +1,23 @@
-# Copyright (C) 2026 The LineageOS Project
-# SPDX-License-Identifier: Apache-2.0
+# Mondrian M11A Partial Update transaction bridge.
 #
-# The persistent property stores user intent only. MondrianDisplaySettings
-# resolves it against the active resolution and emits the runtime request.
-# init remains the only writer of the root-owned msm_drm module parameter.
+# The app owns user intent only. HWC must retire a composition with Partial
+# Update disabled before init is allowed to switch the kernel policy to profile
+# 0. For profile 1 the order is reversed: kernel capability first, HWC ROI
+# composition second. Generation-tagged acknowledgements prevent a stale
+# transition from being reported as successful.
 
-on property:sys.mondrian.partial_update_profile=0
+on property:sys.mondrian.partial_update_request=*
+    setprop vendor.mondrian.display.request ${sys.mondrian.partial_update_request}
+
+on property:vendor.mondrian.display.status=*
+    setprop sys.mondrian.partial_update_status ${vendor.mondrian.display.status}
+
+# HWC sets profile_serial immediately before changing profile. init remains the
+# only writer of the root-owned msm_drm module parameter.
+on property:vendor.mondrian.display.profile=0
     write /sys/module/msm_drm/parameters/m11a_partial_update_profile 0
+    setprop vendor.mondrian.display.profile_applied ${vendor.mondrian.display.profile_serial}:0
 
-on property:sys.mondrian.partial_update_profile=1
+on property:vendor.mondrian.display.profile=1
     write /sys/module/msm_drm/parameters/m11a_partial_update_profile 1
+    setprop vendor.mondrian.display.profile_applied ${vendor.mondrian.display.profile_serial}:1

@@ -1,0 +1,265 @@
+diff --git a/composer/Android.bp b/composer/Android.bp
+index 918dd5e..3cd0ab1 100644
+--- a/composer/Android.bp
++++ b/composer/Android.bp
+@@ -95,3 +95,10 @@ prebuilt_etc_xml {
+     sub_dir: "vintf/manifest",
+     vendor: true,
+ }
++
++// Device trees using the Mondrian runtime transaction require the composer
++// companion below. Keeping this as a named dependency makes a missing patch a
++// build-time failure instead of silently falling back to kernel-only control.
++phony {
++    name: "mondrian_display_hwc_integration",
++    required: ["vendor.qti.hardware.display.composer-service"],
++}
+diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
+new file mode 100644
+index 0000000..0a5f11c
+--- /dev/null
++++ b/composer/hwc_mondrian.cpp
+@@ -0,0 +1,181 @@
++/* Copyright (C) 2026 The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include "hwc_session.h"
++
++#include <cutils/properties.h>
++
++#include <chrono>
++#include <fstream>
++#include <string>
++#include <thread>
++
++#include "hwc_debugger.h"
++
++#define __CLASS__ "HWCSession"
++
++namespace sdm {
++namespace {
++
++constexpr char kControl[] = "ro.vendor.mondrian.display_control";
++constexpr char kRequest[] = "vendor.mondrian.display.request";
++constexpr char kStatus[] = "vendor.mondrian.display.status";
++constexpr char kProfile[] = "vendor.mondrian.display.profile";
++constexpr char kSerial[] = "vendor.mondrian.display.profile_serial";
++constexpr char kApplied[] = "vendor.mondrian.display.profile_applied";
++constexpr char kProfilePath[] =
++    "/sys/module/msm_drm/parameters/m11a_partial_update_profile";
++
++std::string ReadProperty(const char *name) {
++  char value[PROPERTY_VALUE_MAX] = {};
++  property_get(name, value, "");
++  return value;
++}
++
++bool ParseRequest(const std::string &request, int *profile) {
++  if (!profile || request.size() != 38 || request[36] != ':' ||
++      (request[37] != '0' && request[37] != '1')) {
++    return false;
++  }
++
++  for (size_t i = 0; i < 36; ++i) {
++    if (i == 8 || i == 13 || i == 18 || i == 23) {
++      if (request[i] != '-') return false;
++      continue;
++    }
++    const char c = request[i];
++    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
++  }
++
++  *profile = request[37] - '0';
++  return true;
++}
++
++bool KernelProfileIs(int profile) {
++  int actual = -1;
++  std::ifstream stream(kProfilePath);
++  return (stream >> actual) && actual == profile;
++}
++
++bool ProgramKernelProfile(const std::string &request, int profile) {
++  // Serialize init writes by acknowledgement. If a previous trigger ever times
++  // out, do not queue another one until its exact generation has drained.
++  static std::string pending;
++  if (!pending.empty()) {
++    if (ReadProperty(kApplied) != pending) return false;
++    pending.clear();
++  }
++
++  if (ReadProperty(kRequest) != request) return false;
++
++  const std::string serial = request.substr(0, 36);
++  const std::string expected = serial + ":" + std::to_string(profile);
++  pending = expected;
++
++  if (property_set(kSerial, serial.c_str()) != 0 ||
++      property_set(kProfile, "") != 0 ||
++      property_set(kProfile, profile ? "1" : "0") != 0) {
++    pending.clear();
++    return false;
++  }
++
++  const auto deadline =
++      std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
++  do {
++    if (ReadProperty(kRequest) != request) return false;
++    if (ReadProperty(kApplied) == expected && KernelProfileIs(profile)) {
++      pending.clear();
++      return true;
++    }
++    std::this_thread::sleep_for(std::chrono::milliseconds(10));
++  } while (std::chrono::steady_clock::now() < deadline);
++
++  // Keep pending set. A future request must observe the old acknowledgement
++  // before another init write can be queued, preventing a late old ON write.
++  return false;
++}
++
++}  // namespace
++
++bool HWCSession::MondrianCommitPartialUpdate(bool enable) {
++  if (!callbacks_.IsClientConnected() || mondrian_stop_) return false;
++
++  {
++    SEQUENCE_WAIT_SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
++    HWCDisplay *display = hwc_display_[HWC_DISPLAY_PRIMARY];
++    if (!display || pending_power_mode_[HWC_DISPLAY_PRIMARY]) return false;
++
++    uint32_t pending = 0;
++    const DisplayError error = display->ControlPartialUpdate(enable, &pending);
++    if (error != kErrorNone) {
++      DLOGE("Mondrian: HWC Partial Update %s failed: %d",
++            enable ? "enable" : "disable", error);
++      return false;
++    }
++  }
++
++  // Always force one fresh validate/present, even for a same-state request.
++  // profile=0 is not safe until a full HWC composition has actually retired.
++  const int error = WaitForCommitDone(HWC_DISPLAY_PRIMARY, kClientPartialUpdate);
++  if (error != 0) {
++    DLOGE("Mondrian: full composition retire failed: %d", error);
++    return false;
++  }
++  return true;
++}
++
++bool HWCSession::ProcessMondrianPartialUpdate(const std::string &request, int profile) {
++  // OFF is the synchronization state. This is intentionally done for both
++  // directions, so no stale cropped planes can survive a failed/old request.
++  if (!MondrianCommitPartialUpdate(false)) return false;
++  if (ReadProperty(kRequest) != request || mondrian_stop_) return false;
++
++  if (!ProgramKernelProfile(request, profile)) return false;
++  if (ReadProperty(kRequest) != request || mondrian_stop_) return false;
++
++  if (profile == 0) {
++    // HWC is already disabled and the full frame retired before kernel OFF.
++    return true;
++  }
++
++  // Kernel ROI capability is live. HWC may now generate partial composition.
++  if (MondrianCommitPartialUpdate(true) && ReadProperty(kRequest) == request) {
++    return true;
++  }
++
++  // Enabling HWC failed after kernel profile 1. Return to the conservative
++  // state while the same generation is still current.
++  if (ReadProperty(kRequest) == request) {
++    MondrianCommitPartialUpdate(false);
++    ProgramKernelProfile(request, 0);
++  }
++  return false;
++}
++
++void HWCSession::StartMondrianPartialUpdate() {
++  if (!property_get_bool(kControl, false)) return;
++
++  mondrian_stop_ = false;
++  property_set(kStatus, "offline");
++  mondrian_thread_ = std::thread([this] {
++    std::string previous;
++
++    while (!mondrian_stop_) {
++      // On boot or composer restart, wait until SurfaceFlinger has registered
++      // its callback. Otherwise Refresh() cannot provide the retire fence that
++      // makes an OFF transition safe.
++      if (!callbacks_.IsClientConnected()) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(25));
++        continue;
++      }
++
++      const std::string request = ReadProperty(kRequest);
++      int profile = -1;
++      if (request != previous && ParseRequest(request, &profile)) {
++        previous = request;
++        const bool ok = ProcessMondrianPartialUpdate(request, profile);
++
++        // A superseded generation must never publish state for the new one.
++        if (ReadProperty(kRequest) == request) {
++          property_set(kStatus, (request + (ok ? ":ok" : ":error")).c_str());
++        }
++      }
++      std::this_thread::sleep_for(std::chrono::milliseconds(25));
++    }
++  });
++}
++
++void HWCSession::StopMondrianPartialUpdate() {
++  mondrian_stop_ = true;
++  if (mondrian_thread_.joinable()) mondrian_thread_.join();
++}
++
++}  // namespace sdm
+diff --git a/composer/hwc_session.cpp b/composer/hwc_session.cpp
+index 32e671a..f36b5a3 100644
+--- a/composer/hwc_session.cpp
++++ b/composer/hwc_session.cpp
+@@ -260,9 +260,11 @@ void HWCSession::PostInit() {
+   // This avoids deadlock between composer and its clients.
+   auto hwc_display = hwc_display_[HWC_DISPLAY_PRIMARY];
+   hwc_display->PostInit();
++  StartMondrianPartialUpdate();
+ }
+ 
+ int HWCSession::Deinit() {
++  StopMondrianPartialUpdate();
+   // Destroy all connected displays
+   DestroyDisplay(&map_info_primary_);
+ 
+diff --git a/composer/hwc_session.h b/composer/hwc_session.h
+index 270275e..b84c708 100644
+--- a/composer/hwc_session.h
++++ b/composer/hwc_session.h
+@@ -36,10 +36,12 @@
+ #include <display_config.h>
+ #include <vector>
+ #include <queue>
+ #include <utility>
++#include <atomic>
+ #include <future>   // NOLINT
+ #include <map>
+ #include <unordered_map>
+ #include <string>
+ #include <memory>
++#include <thread>
+ #include <core/display_interface.h>
+ 
+ #include "hwc_callbacks.h"
+@@ -596,6 +598,14 @@ class HWCSession : hwc2_device_t, HWCUEventListener, public qClient::BnQClient,
+   void PostCommitUnlocked(hwc2_display_t display, const shared_ptr<Fence> &retire_fence,
+                           HWC2::Error status);
+   void PostCommitLocked(hwc2_display_t display, shared_ptr<Fence> &retire_fence);
++  void StartMondrianPartialUpdate();
++  void StopMondrianPartialUpdate();
++  bool ProcessMondrianPartialUpdate(const std::string &request, int profile);
++  bool MondrianCommitPartialUpdate(bool enable);
++  std::atomic<bool> mondrian_stop_{false};
++  std::thread mondrian_thread_;
++
+   int WaitForCommitDone(hwc2_display_t display, int client_id);
+   int WaitForCommitDoneAsync(hwc2_display_t display, int client_id);
+   void NotifyDisplayAttributes(hwc2_display_t display, hwc2_config_t config);

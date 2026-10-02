@@ -15,8 +15,10 @@ include vendor/xiaomi/mondrian/BoardConfigVendor.mk
 
 DEVICE_PATH := device/xiaomi/mondrian
 
-# Device-specific system_ext policy for MondrianDisplaySettings
+# Device-specific policy for MondrianDisplaySettings and its vendor HWC bridge.
 SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/private
+SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/public
+BOARD_VENDOR_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/vendor
 
 # Properties
 TARGET_ODM_PROP += $(DEVICE_PATH)/properties/odm.prop

@@ -13,6 +13,7 @@ android_app {
     static_libs: ["org.lineageos.settings.resources"],
     required: [
         "init.mondrian.display.rc",
+        "mondrian_display_hwc_integration",
         "privapp-permissions-mondrian-display.xml",
     ],
     optimize: {

@@ -13,6 +13,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 final class PartialUpdateBackend {
     private static final String TAG = "MondrianPartialUpdate";
@@ -21,14 +22,16 @@ final class PartialUpdateBackend {
             "/sys/module/msm_drm/parameters/m11a_partial_update_profile";
     private static final String PROP_DESIRED =
             "persist.sys.mondrian.partial_update_enabled";
-    private static final String PROP_RUNTIME =
-            "sys.mondrian.partial_update_profile";
+    private static final String PROP_REQUEST =
+            "sys.mondrian.partial_update_request";
+    private static final String PROP_STATUS =
+            "sys.mondrian.partial_update_status";
 
     private static final int PROFILE_UNKNOWN = -1;
     private static final int PROFILE_DISABLED = 0;
     private static final int PROFILE_SAFE = 1;
-    private static final long APPLY_TIMEOUT_MS = 1000;
-    private static final long POLL_MS = 25;
+    private static final long APPLY_TIMEOUT_MS = 6000;
+    private static final long POLL_MS = 20;
 
     static final class State {
         final boolean supported;
@@ -51,10 +54,11 @@ final class PartialUpdateBackend {
         int actual = readProfileOrUnknown();
         boolean supported = actual != PROFILE_UNKNOWN;
         boolean wqhd = isWqhd(width, height);
+        boolean verified = isVerified(actual);
         return new State(
                 supported,
                 supported && wqhd,
-                supported && actual != PROFILE_DISABLED,
+                supported && actual != PROFILE_DISABLED && verified,
                 desiredEnabled(),
                 actual);
     }
@@ -66,16 +70,18 @@ final class PartialUpdateBackend {
         }
         int target = isWqhd(width, height) && desiredEnabled()
                 ? PROFILE_SAFE : PROFILE_DISABLED;
-        if (actual != target) {
+        if (actual != target || !isVerified(target)) {
             requestProfile(target);
         }
     }
 
     void ensureDisabledForTransition() throws Exception {
-        int actual = readProfile();
-        if (actual != PROFILE_DISABLED) {
-            requestProfile(PROFILE_DISABLED);
+        if (readProfileOrUnknown() == PROFILE_UNKNOWN) {
+            return;
         }
+        // Always request a fresh HWC full-frame retire before a resolution
+        // transaction. A sysfs value of 0 alone does not prove HWC state.
+        requestProfile(PROFILE_DISABLED);
     }
 
     void setUserEnabled(boolean enabled, int width, int height) throws Exception {
@@ -91,19 +97,29 @@ final class PartialUpdateBackend {
             setDesiredEnabled(enabled);
             requestProfile(enabled ? PROFILE_SAFE : PROFILE_DISABLED);
         } catch (Exception failure) {
+            SystemProperties.set(PROP_DESIRED, previousDesired);
+            // Supersede any late transition with a conservative OFF request.
+            // The HWC worker checks the generation before it can enable ROI.
             try {
-                SystemProperties.set(PROP_DESIRED, previousDesired);
-                requestProfile("1".equals(previousDesired)
-                        ? PROFILE_SAFE : PROFILE_DISABLED);
-            } catch (Exception restoreFailure) {
-                failure.addSuppressed(restoreFailure);
+                SystemProperties.set(PROP_REQUEST,
+                        UUID.randomUUID().toString() + ":" + PROFILE_DISABLED);
+            } catch (RuntimeException recoveryFailure) {
+                failure.addSuppressed(recoveryFailure);
             }
             throw failure;
         }
     }
 
+    private boolean isVerified(int profile) {
+        if (profile != PROFILE_DISABLED && profile != PROFILE_SAFE) {
+            return false;
+        }
+        String request = SystemProperties.get(PROP_REQUEST, "");
+        return request.endsWith(":" + profile)
+                && (request + ":ok").equals(SystemProperties.get(PROP_STATUS, ""));
+    }
+
     private boolean desiredEnabled() {
-        // Availability at WQHD must never imply consent to enable Partial Update.
         return "1".equals(SystemProperties.get(PROP_DESIRED, ""));
     }
 
@@ -116,30 +132,35 @@ final class PartialUpdateBackend {
             throw new IllegalArgumentException("Unsupported partial-update profile");
         }
 
-        String requested = Integer.toString(profile);
-        // Force an init property edge even if a previous request already left the
-        // transient property at the same value while the kernel state changed later.
-        if (requested.equals(SystemProperties.get(PROP_RUNTIME, ""))) {
-            SystemProperties.set(PROP_RUNTIME, "");
-        }
-        SystemProperties.set(PROP_RUNTIME, requested);
+        String request = UUID.randomUUID().toString() + ":" + profile;
+        SystemProperties.set(PROP_REQUEST, request);
         long deadline = SystemClock.elapsedRealtime() + APPLY_TIMEOUT_MS;
         IOException lastReadFailure = null;
 
         while (SystemClock.elapsedRealtime() < deadline) {
-            try {
-                if (readProfile() == profile) {
-                    return;
+            String status = SystemProperties.get(PROP_STATUS, "");
+            if ((request + ":ok").equals(status)) {
+                try {
+                    if (readProfile() == profile) {
+                        return;
+                    }
+                    lastReadFailure = null;
+                } catch (IOException e) {
+                    lastReadFailure = e;
                 }
-                lastReadFailure = null;
-            } catch (IOException e) {
-                lastReadFailure = e;
+            } else if ((request + ":error").equals(status)) {
+                break;
             }
             SystemClock.sleep(POLL_MS);
         }
 
+        // A new OFF generation makes a late old ON harmless: HWC validates the
+        // request generation again before enabling Partial Update composition.
+        SystemProperties.set(PROP_REQUEST,
+                UUID.randomUUID().toString() + ":" + PROFILE_DISABLED);
+
         IOException failure = new IOException(
-                "Partial-update profile did not reach " + profile);
+                "Partial-update HWC/kernel transaction failed for profile " + profile);
         if (lastReadFailure != null) {
             failure.addSuppressed(lastReadFailure);
         }

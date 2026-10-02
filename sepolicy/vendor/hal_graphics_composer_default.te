@@ -1,0 +1,5 @@
+get_prop(hal_graphics_composer_default, vendor_mondrian_display_request_prop)
+get_prop(hal_graphics_composer_default, vendor_mondrian_display_state_prop)
+set_prop(hal_graphics_composer_default, vendor_mondrian_display_state_prop)
+# Readback only; init retains the sole sysfs write permission.
+allow hal_graphics_composer_default sysfs_mondrian_partial_update:file r_file_perms;
