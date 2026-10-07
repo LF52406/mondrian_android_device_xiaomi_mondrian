@@ -184,38 +184,9 @@ diff --git a/services/core/java/com/android/server/vibrator/VibratorManagerServi
 diff --git a/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java b/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java
 --- a/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java
 +++ b/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java
-@@ -33,8 +33,13 @@
- import android.content.Context;
- import android.content.Intent;
- import android.graphics.drawable.Drawable;
-+import android.media.AudioAttributes;
- import android.metrics.LogMaker;
- import android.os.Handler;
-+import android.os.HapticEngineConfig;
- import android.os.Looper;
- import android.os.Message;
-+import android.os.VibrationEffect;
-+import android.os.Vibrator;
-+import android.provider.Settings;
- import android.text.format.DateUtils;
-@@ -86,2 +91,7 @@
-     private static final long DEFAULT_STALE_TIMEOUT = 10 * DateUtils.MINUTE_IN_MILLIS;
-+    private static final AudioAttributes HAPTIC_ENGINE_QS_ATTRIBUTES =
-+            new AudioAttributes.Builder()
-+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-+                    .build();
-     protected static final Object ARG_SHOW_TRANSIENT_ENABLING = new Object();
-@@ -107,2 +117,3 @@
-     private final MetricsLogger mMetricsLogger;
-     private final StatusBarStateController mStatusBarStateController;
-+    private final Vibrator mVibrator;
-@@ -194,3 +205,4 @@
-         mHost = host;
-         mContext = host.getContext();
-+        mVibrator = mContext.getSystemService(Vibrator.class);
-         mInstanceId = uiEventLogger.getNewInstanceId();
-@@ -310,7 +322,24 @@
+@@ -310,6 +310,27 @@
+         mQSLogger.logTileClick(mTileSpec, mStatusBarStateController.getState(), mState.state,
+                 eventId);
          if (!mFalsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
 +            maybePerformHapticEngineTileClick();
              mHandler.obtainMessage(H.CLICK, eventId, 0, expandable).sendToTarget();
@@ -223,24 +194,31 @@ diff --git a/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.j
      }
  
 +    private void maybePerformHapticEngineTileClick() {
-+        if (mVibrator == null || !mVibrator.hasVibrator()) return;
-+        HapticEngineConfig config = HapticEngineConfig.parse(
-+                Settings.Secure.getStringForUser(
++        android.os.Vibrator vibrator = mContext.getSystemService(android.os.Vibrator.class);
++        if (vibrator == null || !vibrator.hasVibrator()) return;
++
++        android.os.HapticEngineConfig config = android.os.HapticEngineConfig.parse(
++                android.provider.Settings.Secure.getStringForUser(
 +                        mContext.getContentResolver(),
-+                        HapticEngineConfig.SETTINGS_KEY,
++                        android.os.HapticEngineConfig.SETTINGS_KEY,
 +                        mCurrentTileUser.get()));
 +        if (!config.enabled || config.strength == 0) return;
 +
 +        int effectId = mState instanceof BooleanState && ((BooleanState) mState).value
-+                ? VibrationEffect.EFFECT_TICK
-+                : VibrationEffect.EFFECT_CLICK;
-+        mVibrator.vibrate(
-+                VibrationEffect.createPredefined(effectId), HAPTIC_ENGINE_QS_ATTRIBUTES);
++                ? android.os.VibrationEffect.EFFECT_TICK
++                : android.os.VibrationEffect.EFFECT_CLICK;
++        android.media.AudioAttributes attrs = new android.media.AudioAttributes.Builder()
++                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
++                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
++                .build();
++        vibrator.vibrate(android.os.VibrationEffect.createPredefined(effectId), attrs);
 +    }
 +
      @Override
      public void secondaryClick(@Nullable Expandable expandable) {
-@@ -327,4 +356,5 @@
+@@ -327,6 +348,7 @@
+         mQSLogger.logTileSecondaryClick(mTileSpec, mStatusBarStateController.getState(),
+                 mState.state, eventId);
          if (!mFalsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
 +            maybePerformHapticEngineTileClick();
              mHandler.obtainMessage(H.SECONDARY_CLICK, eventId, 0, expandable).sendToTarget();
