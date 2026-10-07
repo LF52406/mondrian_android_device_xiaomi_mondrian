@@ -63,6 +63,15 @@ def main():
     with lock_path.open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
 
+        # The extension changes files that are also touched by the base patch, so once
+        # both patches are installed the base patch is no longer independently
+        # reverse-checkable. Detect the final state first to keep repeated runs and
+        # --check idempotent.
+        if git(framework, "apply", "--reverse", "--check",
+               str(system_ui_patch)).returncode == 0:
+            print("ok")
+            return
+
         if git(framework, "apply", "--reverse", "--check", str(base_patch)).returncode != 0:
             result = git(framework, "apply", "--check", str(base_patch))
             selected_patch = base_patch
