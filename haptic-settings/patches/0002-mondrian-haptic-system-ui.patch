@@ -184,7 +184,7 @@ diff --git a/services/core/java/com/android/server/vibrator/VibratorManagerServi
 diff --git a/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java b/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java
 --- a/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java
 +++ b/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java
-@@ -310,6 +310,27 @@
+@@ -310,9 +310,31 @@
          mQSLogger.logTileClick(mTileSpec, mStatusBarStateController.getState(), mState.state,
                  eventId);
          if (!mFalsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
