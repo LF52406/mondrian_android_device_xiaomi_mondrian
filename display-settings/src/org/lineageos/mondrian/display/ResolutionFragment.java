@@ -82,6 +82,11 @@ public final class ResolutionFragment extends Fragment {
             boolean changingDisplayConfig = before.width != width
                     || before.height != targetHeight
                     || before.scaling != 0;
+            // Re-tapping the selected card must not start a redundant HWC
+            // disable/enable cycle (or a WindowManager display transaction).
+            if (!changingDisplayConfig) {
+                return readUi();
+            }
             if (changingDisplayConfig) {
                 // Any real WM display transaction starts from verified full-frame mode.
                 mController.partialUpdate.ensureDisabledForTransition();
@@ -170,16 +175,23 @@ public final class ResolutionFragment extends Fragment {
         updateEnabled();
 
         mController.execute(work, (ui, error) -> {
-            mBusy = false;
-            if (!isAdded() || getView() == null) return;
+            if (!isAdded() || getView() == null) {
+                mBusy = false;
+                return;
+            }
 
             if (error == null && ui != null) {
+                mBusy = false;
                 render(ui);
                 return;
             }
 
+            // Keep the controls disabled until recovery reads the actual
+            // device state. Otherwise a second tap can overtake this read and
+            // the stale result may select the wrong resolution card.
             Toast.makeText(requireContext(), errorMessage, Toast.LENGTH_LONG).show();
             mController.execute(this::readUi, (recovered, readError) -> {
+                mBusy = false;
                 if (!isAdded() || getView() == null) return;
                 if (recovered != null) {
                     render(recovered);
