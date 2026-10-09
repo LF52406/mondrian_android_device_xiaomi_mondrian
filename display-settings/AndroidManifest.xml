@@ -12,6 +12,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.READ_SEARCH_INDEXABLES" />
+    <uses-permission android:name="android.permission.READ_APP_SPECIFIC_LOCALES" />
 
     <application
         android:label="@string/display_mode_title"
@@ -48,6 +49,7 @@
                 <action android:name="android.intent.action.USER_INITIALIZE" />
                 <action android:name="android.intent.action.USER_ADDED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.LOCALE_CHANGED" />
             </intent-filter>
         </receiver>
 
