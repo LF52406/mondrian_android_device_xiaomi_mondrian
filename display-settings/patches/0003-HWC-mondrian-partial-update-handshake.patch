@@ -19,7 +19,7 @@ new file mode 100644
 index 0000000..0a5f11c
 --- /dev/null
 +++ b/composer/hwc_mondrian.cpp
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,211 @@
 +/* Copyright (C) 2026 The LineageOS Project
 + * SPDX-License-Identifier: Apache-2.0
 + */
@@ -40,7 +40,7 @@ index 0000000..0a5f11c
 +namespace sdm {
 +namespace {
 +
-+constexpr char kControl[] = "ro.vendor.mondrian.display_control";
++constexpr char kDeviceSku[] = "ro.boot.hardware.sku";
 +constexpr char kRequest[] = "vendor.mondrian.display.request";
 +constexpr char kStatus[] = "vendor.mondrian.display.status";
 +constexpr char kProfile[] = "vendor.mondrian.display.profile";
@@ -137,9 +137,11 @@ index 0000000..0a5f11c
 +    }
 +  }
 +
-+  // Always force one fresh validate/present, even for a same-state request.
-+  // profile=0 is not safe until a full HWC composition has actually retired.
-+  const int error = WaitForCommitDone(HWC_DISPLAY_PRIMARY, kClientPartialUpdate);
++  // Match Qualcomm\'s own ControlPartialUpdate contract: a zero pending
++  // count means no new retire is required. Never block waiting for a frame
++  // that HWC does not plan to present.
++  if (!pending) return true;
++  const int error = WaitForCommitDoneAsync(HWC_DISPLAY_PRIMARY, kClientPartialUpdate);
 +  if (error != 0) {
 +    DLOGE("Mondrian: full composition retire failed: %d", error);
 +    return false;
@@ -176,12 +178,16 @@ index 0000000..0a5f11c
 +}
 +
 +void HWCSession::StartMondrianPartialUpdate() {
-+  if (!property_get_bool(kControl, false)) return;
++  // The bootloader hardware SKU is stable across build-fingerprint spoofing.
++  // This companion is installed only for mondrian; never rely on a build.prop
++  // switch that can be absent from Android\'s runtime property service.
++  if (ReadProperty(kDeviceSku) != "mondrian") return;
 +
 +  mondrian_stop_ = false;
 +  property_set(kStatus, "offline");
 +  mondrian_thread_ = std::thread([this] {
 +    std::string previous;
++    bool full_frame_initialized = false;
 +
 +    while (!mondrian_stop_) {
 +      // On boot or composer restart, wait until SurfaceFlinger has registered
@@ -190,6 +196,17 @@ index 0000000..0a5f11c
 +      if (!callbacks_.IsClientConnected()) {
 +        std::this_thread::sleep_for(std::chrono::milliseconds(25));
 +        continue;
++      }
++
++      // HWC may start with its own partial-update policy even while the
++      // kernel is already in profile 0. Reconcile HWC to a retired full
++      // composition before accepting any request or reporting OFF ready.
++      if (!full_frame_initialized) {
++        if (!MondrianCommitPartialUpdate(false)) {
++          std::this_thread::sleep_for(std::chrono::milliseconds(100));
++          continue;
++        }
++        full_frame_initialized = true;
 +      }
 +
 +      const std::string request = ReadProperty(kRequest);
