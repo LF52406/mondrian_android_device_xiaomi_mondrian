@@ -3,7 +3,11 @@
  */
 package org.lineageos.mondrian.display;
 
+import android.app.LocaleManager;
+import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
+import android.os.LocaleList;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.os.Bundle;
@@ -26,11 +30,11 @@ public final class ResolutionSearchProvider extends SearchIndexablesProvider {
         cursor.newRow()
                 .add(SearchIndexablesContract.RawData.COLUMN_RANK, 1)
                 .add(SearchIndexablesContract.RawData.COLUMN_TITLE,
-                        getContext().getString(R.string.display_mode_title))
+                        localizedString(R.string.display_mode_title))
                 .add(SearchIndexablesContract.RawData.COLUMN_KEYWORDS,
-                        getContext().getString(R.string.resolution_search_keywords))
+                        localizedString(R.string.resolution_search_keywords))
                 .add(SearchIndexablesContract.RawData.COLUMN_SCREEN_TITLE,
-                        getContext().getString(R.string.display_mode_title))
+                        localizedString(R.string.display_mode_title))
                 .add(SearchIndexablesContract.RawData.COLUMN_INTENT_ACTION, Intent.ACTION_MAIN)
                 .add(SearchIndexablesContract.RawData.COLUMN_INTENT_TARGET_PACKAGE,
                         getContext().getPackageName())
@@ -45,6 +49,27 @@ public final class ResolutionSearchProvider extends SearchIndexablesProvider {
         return new MatrixCursor(SearchIndexablesContract.NON_INDEXABLES_KEYS_COLUMNS);
     }
 
+    private String localizedString(int resId) {
+        final Context context = getContext();
+        // Settings may use a per-app locale different from the provider process.
+        // Align the injected title and summary with the Settings UI locale.
+        try {
+            LocaleManager locales = context.getSystemService(LocaleManager.class);
+            if (locales != null) {
+                LocaleList settingsLocales = locales.getApplicationLocales("com.android.settings");
+                if (settingsLocales != null && !settingsLocales.isEmpty()) {
+                    Configuration config = new Configuration(context.getResources().getConfiguration());
+                    config.setLocales(settingsLocales);
+                    return context.createConfigurationContext(config).getString(resId);
+                }
+            }
+        } catch (SecurityException ignored) {
+            // A restricted ROM may omit permission support. Preserve the normal
+            // locale-resolution behavior rather than breaking Settings search.
+        }
+        return context.getString(resId);
+    }
+
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
         getContext().enforceCallingOrSelfPermission("android.permission.READ_SEARCH_INDEXABLES",
@@ -53,7 +78,7 @@ public final class ResolutionSearchProvider extends SearchIndexablesProvider {
 
         Bundle result = new Bundle();
         result.putString("com.android.settings.summary",
-                getContext().getString(R.string.display_mode_summary));
+                localizedString(R.string.display_mode_summary));
         return result;
     }
 }
