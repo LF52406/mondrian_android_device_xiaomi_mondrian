@@ -30,7 +30,7 @@ final class PartialUpdateBackend {
     private static final int PROFILE_UNKNOWN = -1;
     private static final int PROFILE_DISABLED = 0;
     private static final int PROFILE_SAFE = 1;
-    private static final long APPLY_TIMEOUT_MS = 6000;
+    private static final long APPLY_TIMEOUT_MS = 12000;
     private static final long POLL_MS = 20;
 
     static final class State {
