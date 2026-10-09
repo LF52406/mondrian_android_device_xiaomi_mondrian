@@ -77,7 +77,10 @@ final class PartialUpdateBackend {
 
     void ensureDisabledForTransition() throws Exception {
         if (readProfileOrUnknown() == PROFILE_UNKNOWN) {
-            return;
+            // A successful resolution change must not bypass the mandatory
+            // full-frame HWC/kernel handshake when the kernel control is
+            // unavailable. Fail closed instead of risking a cropped frame.
+            throw new IOException("M11A partial-update control is unavailable");
         }
         // Always request a fresh HWC full-frame retire before a resolution
         // transaction. A sysfs value of 0 alone does not prove HWC state.
