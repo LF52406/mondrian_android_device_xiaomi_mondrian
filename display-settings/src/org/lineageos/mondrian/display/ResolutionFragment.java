@@ -134,8 +134,9 @@ public final class ResolutionFragment extends Fragment {
                 // state and should be restored, not presented as a confirmation dialog.
                 mController.engine.recover(true);
             }
-            ResolutionEngine.Frame frame = mController.backend.read();
-            reconcilePartialBestEffort(frame);
+            // Rendering the selected card must never wait for the optional HWC
+            // profile handshake. Boot/recovery and completed transactions own
+            // best-effort reconciliation; refresh only reads the actual state.
             return readUi();
         });
     }
