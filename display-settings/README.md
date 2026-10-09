@@ -50,12 +50,26 @@ The required SettingsLib companion patch is also unchanged. It keeps the FHD+
 logical default density proportional to the native WQHD+ density, so Display size
 and Reset do not change perceived UI scale.
 
-Apply it before building:
+Apply all required source patches with **one** command from the ROM root:
 
 ```bash
-bash device/xiaomi/mondrian/display-settings/apply-settingslib-patch.sh
-m Settings MondrianDisplaySettings
+bash device/xiaomi/mondrian/display-settings/apply-display-patches.sh "$PWD"
 ```
+
+The entry point installs the SettingsLib density patch and BootAnimation
+geometry patch, then the Qualcomm HWC partial-update handshake. It is
+idempotent for a matching, fully applied patch and refuses to overwrite
+unrelated local changes in the touched source files. The individual scripts
+remain implementation details and should not be run separately.
+
+The DRM/SDE/DSI fixes are maintained in the separate kernel-modules source
+repository; framework patching does not merge or cherry-pick kernel commits.
+Include the matching `fix/mondrian-pu-fullframe-sync` kernel-modules commit
+before building a test ROM. Do not assume HWC work alone proves WQHD+ is free
+from artifacts. Validate the device with Partial Update disabled and enabled.
+
+After the patches are applied, build Settings, MondrianDisplaySettings,
+BootAnimation, the display composer and matching kernel modules.
 
 ## M11A Partial Update
 
@@ -145,3 +159,19 @@ adb shell wm size reset
 adb shell wm density reset
 adb shell wm scaling auto
 ```
+
+## Hardware validation gate
+
+The prior WQHD+/ROI OFF field logs show partial compositor operations while the
+kernel profile was observed as 0, and the earlier HWC handshake did not report
+an acknowledgement. The coordinated HWC change starts from a full-frame
+composition on mondrian, uses a bounded commit wait, and only reports the
+kernel policy after the matching init acknowledgement. The selected resolution
+card is displayed from WindowManager state without waiting for the optional
+profile transaction.
+
+These changes have source-level checks only. Test WQHD+ with ROI OFF during
+Gboard typing, voice input, Telegram scrolling, loading animations, and
+refresh-rate changes (60/90/120 Hz). Verify full-frame geometry in DRM traces
+and the absence of stale cropped planes. Also verify the existing ON behavior,
+FHD+ gating, AOD/UDFPS and boot animation before promoting the branch.
