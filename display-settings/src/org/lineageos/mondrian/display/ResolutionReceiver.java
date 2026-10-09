@@ -13,6 +13,12 @@ public final class ResolutionReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         if (UserHandle.myUserId() != UserHandle.USER_SYSTEM) return;
         String action = intent.getAction();
+        if (Intent.ACTION_LOCALE_CHANGED.equals(action)) {
+            // Dynamic Settings entry titles and summaries can be cached by
+            // Settings independently of the app Activity resources.
+            context.getContentResolver().notifyChange(ResolutionController.SUMMARY_URI, null);
+            return;
+        }
         boolean alarm = ResolutionController.ACTION_ROLLBACK.equals(action);
         boolean added = Intent.ACTION_USER_ADDED.equals(action);
         boolean recovery = Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action)
