@@ -19,7 +19,7 @@ new file mode 100644
 index 0000000..0a5f11c
 --- /dev/null
 +++ b/composer/hwc_mondrian.cpp
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,212 @@
 +/* Copyright (C) 2026 The LineageOS Project
 + * SPDX-License-Identifier: Apache-2.0
 + */
@@ -40,7 +40,7 @@ index 0000000..0a5f11c
 +namespace sdm {
 +namespace {
 +
-+constexpr char kDeviceSku[] = "ro.boot.hardware.sku";
++constexpr char kDeviceEnabled[] = "ro.vendor.mondrian.display_control";
 +constexpr char kRequest[] = "vendor.mondrian.display.request";
 +constexpr char kStatus[] = "vendor.mondrian.display.status";
 +constexpr char kProfile[] = "vendor.mondrian.display.profile";
@@ -123,12 +123,12 @@ index 0000000..0a5f11c
 +bool HWCSession::MondrianCommitPartialUpdate(bool enable) {
 +  if (!callbacks_.IsClientConnected() || mondrian_stop_) return false;
 +
++  uint32_t pending = 0;
 +  {
 +    SEQUENCE_WAIT_SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
 +    HWCDisplay *display = hwc_display_[HWC_DISPLAY_PRIMARY];
 +    if (!display || pending_power_mode_[HWC_DISPLAY_PRIMARY]) return false;
 +
-+    uint32_t pending = 0;
 +    const DisplayError error = display->ControlPartialUpdate(enable, &pending);
 +    if (error != kErrorNone) {
 +      DLOGE("Mondrian: HWC Partial Update %s failed: %d",
@@ -178,10 +178,10 @@ index 0000000..0a5f11c
 +}
 +
 +void HWCSession::StartMondrianPartialUpdate() {
-+  // The bootloader hardware SKU is stable across build-fingerprint spoofing.
-+  // This companion is installed only for mondrian; never rely on a build.prop
-+  // switch that can be absent from Android\'s runtime property service.
-+  if (ReadProperty(kDeviceSku) != "mondrian") return;
++  // Only device trees that explicitly provision the vendor display-control
++  // bridge may start this worker. Xiaomi boot SKU values are not guaranteed
++  // to equal the device codename; they must not silently disable the bridge.
++  if (ReadProperty(kDeviceEnabled) != "true") return;
 +
 +  mondrian_stop_ = false;
 +  property_set(kStatus, "offline");
@@ -194,6 +194,7 @@ index 0000000..0a5f11c
 +      // its callback. Otherwise Refresh() cannot provide the retire fence that
 +      // makes an OFF transition safe.
 +      if (!callbacks_.IsClientConnected()) {
++        full_frame_initialized = false;
 +        std::this_thread::sleep_for(std::chrono::milliseconds(25));
 +        continue;
 +      }
