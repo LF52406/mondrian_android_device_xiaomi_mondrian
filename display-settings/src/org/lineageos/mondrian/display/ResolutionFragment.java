@@ -127,28 +127,14 @@ public final class ResolutionFragment extends Fragment {
     private void refresh() {
         if (mBusy) return;
 
-        // Render the current WM size first. Profile reconciliation may need
-        // an HWC retire fence; it must not leave both resolution cards blank.
+        // A screen read must never queue an HWC transaction on the worker that
+        // handles card presses. Boot recovery and completed resolution changes
+        // perform ROI reconciliation; the interactive refresh is read-only.
         run(R.string.resolution_error, () -> {
             if (UserHandle.myUserId() == UserHandle.USER_SYSTEM) {
                 mController.engine.recover(true);
             }
             return readUi();
-        });
-
-        // Queue on the same serial worker, but only after the initial WM read.
-        // A failing optional ROI refresh cannot disable the FHD/WQHD cards.
-        mController.execute(() -> {
-            ResolutionEngine.Frame frame = mController.backend.read();
-            reconcilePartialBestEffort(frame);
-            return readUi();
-        }, (ui, error) -> {
-            if (!isAdded() || getView() == null) return;
-            if (error != null) {
-                Log.w(ResolutionController.TAG, "Background Partial Update refresh failed", error);
-                return;
-            }
-            if (ui != null && !mBusy) render(ui);
         });
     }
 
