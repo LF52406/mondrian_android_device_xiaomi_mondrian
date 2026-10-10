@@ -13,7 +13,7 @@ diff --git a/services/core/java/com/android/server/vibrator/HapticFeedbackVibrat
 diff --git a/services/core/java/com/android/server/vibrator/HapticProfileEngine.java b/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
 --- a/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
 +++ b/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
-@@ -93,12 +93,14 @@
+@@ -93,13 +93,15 @@
       */
      @Nullable
 -    synchronized Result resolveDirectTouch(VibrationEffect effect, HapticEngineConfig config) {
@@ -39,7 +39,7 @@ diff --git a/services/core/java/com/android/server/vibrator/HapticProfileEngine.
                  if (!mInfo.isPrimitiveSupported(primitiveId)) {
                      primitiveId = primitive.getPrimitiveId();
                  }
-@@ -166,6 +168,20 @@
+@@ -166,6 +168,19 @@
          return composition.compose();
      }
  
@@ -69,7 +69,7 @@ diff --git a/services/core/java/com/android/server/vibrator/HapticProfileEngine.
          if (profile == HapticEngineConfig.SOFT) {
              return switch (primitive) {
                  case PRIMITIVE_CLICK, PRIMITIVE_TICK -> PRIMITIVE_LOW_TICK;
-@@ -183,6 +200,10 @@
+@@ -183,5 +200,10 @@
          }
          if (profile == HapticEngineConfig.CRISP) {
 +            // PRIMITIVE_TICK is exceptionally faint on mondrian for Mist Launcher Recents.
@@ -83,7 +83,7 @@ diff --git a/services/core/java/com/android/server/vibrator/HapticProfileEngine.
 diff --git a/services/core/java/com/android/server/vibrator/VibratorManagerService.java b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
 --- a/services/core/java/com/android/server/vibrator/VibratorManagerService.java
 +++ b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
-@@ -738,7 +738,7 @@
+@@ -738,6 +738,6 @@
              HapticProfileEngine.Result engineEffect =
                      getHapticVibrationProvider().getHapticEngineDirectTouchEffect(
 -                            mono.getEffect(), mVibrationSettings.getHapticEngineConfig());
