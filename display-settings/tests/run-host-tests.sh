@@ -46,3 +46,22 @@ if grep -q 'property_get_bool(kControl' "$hwc_repo/composer/hwc_mondrian.cpp"; t
     exit 1
 fi
 echo "PASS: HWC patch chain and idempotent upgrade"
+
+# Catch malformed Soong hunk counts (a previous test build lost a closing }).
+bp_repo="$test_classes/hwc-soong"
+mkdir -p "$bp_repo/composer"
+git -C "$bp_repo" init -q
+for ((n=0; n<94; n++)); do
+    echo "// upstream placeholder"
+done > "$bp_repo/composer/Android.bp"
+cat >> "$bp_repo/composer/Android.bp" <<'EOF'
+    sub_dir: "vintf/manifest",
+    vendor: true,
+}
+EOF
+git -C "$bp_repo" apply --check --include='composer/Android.bp' \
+    "$patches/0003-HWC-mondrian-partial-update-handshake.patch"
+git -C "$bp_repo" apply --include='composer/Android.bp' \
+    "$patches/0003-HWC-mondrian-partial-update-handshake.patch"
+tail -n 1 "$bp_repo/composer/Android.bp" | grep -qx '}'
+echo "PASS: Qualcomm composer Soong brace and patch size"
