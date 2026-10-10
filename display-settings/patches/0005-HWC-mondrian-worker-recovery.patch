@@ -51,7 +51,31 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
    return false;
  }
  
-@@ -131,7 +140,7 @@
+@@ -99,7 +108,10 @@
+ }  // namespace
+ 
+ bool HWCSession::MondrianCommitPartialUpdate(bool enable) {
+-  if (!callbacks_.IsClientConnected() || mondrian_stop_) return false;
++  if (!callbacks_.IsClientConnected() || mondrian_stop_) {
++    DLOGE("Mondrian: composer client is not connected or worker is stopping");
++    return false;
++  }
+ 
+   uint32_t pending = 0;
+   {
+@@ -106,7 +118,10 @@
+     SEQUENCE_WAIT_SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
+     HWCDisplay *display = hwc_display_[HWC_DISPLAY_PRIMARY];
+     if (!display || pending_power_mode_[HWC_DISPLAY_PRIMARY] ||
+-        display->GetCurrentPowerMode() != HWC2::PowerMode::On) return false;
++        display->GetCurrentPowerMode() != HWC2::PowerMode::On) {
++      DLOGE("Mondrian: primary display unavailable or not in ON state");
++      return false;
++    }
+ 
+     const DisplayError error = display->ControlPartialUpdate(enable, &pending);
+     if (error != kErrorNone) {
+@@ -131,7 +146,7 @@
  
        clients_waiting_for_commit_[HWC_DISPLAY_PRIMARY].set(kClientPartialUpdate);
        callbacks_.Refresh(HWC_DISPLAY_PRIMARY);
@@ -60,7 +84,7 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
        if (waited != 0) {
          clients_waiting_for_commit_[HWC_DISPLAY_PRIMARY].reset(kClientPartialUpdate);
          DLOGE("Mondrian: full-frame present timeout: %d", waited);
-@@ -149,7 +158,7 @@
+@@ -149,7 +164,7 @@
        DLOGE("Mondrian: missing retire fence after HWC present");
        return false;
      }
@@ -69,7 +93,26 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
      if (error != 0) {
        DLOGE("Mondrian: retire fence failed: %d", error);
        return false;
-@@ -187,10 +196,16 @@
+@@ -161,10 +176,16 @@
+ bool HWCSession::ProcessMondrianPartialUpdate(const std::string &request, int profile) {
+   // OFF is the synchronization state. This is intentionally done for both
+   // directions, so no stale cropped planes can survive a failed/old request.
+-  if (!MondrianCommitPartialUpdate(false)) return false;
++  if (!MondrianCommitPartialUpdate(false)) {
++    DLOGE("Mondrian: full-frame HWC retirement failed for profile %d", profile);
++    return false;
++  }
+   if (ReadProperty(kRequest) != request || mondrian_stop_) return false;
+ 
+-  if (!ProgramKernelProfile(request, profile)) return false;
++  if (!ProgramKernelProfile(request, profile)) {
++    DLOGE("Mondrian: kernel did not confirm profile %d", profile);
++    return false;
++  }
+   if (ReadProperty(kRequest) != request || mondrian_stop_) return false;
+ 
+   if (profile == 0) {
+@@ -187,10 +208,16 @@
  }
  
  void HWCSession::StartMondrianPartialUpdate() {
@@ -89,7 +132,7 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
    mondrian_thread_ = std::thread([this] {
      std::string previous;
  
-@@ -211,8 +226,16 @@
+@@ -211,8 +238,16 @@
  
          // A superseded generation must never publish state for the new one.
          if (ReadProperty(kRequest) == request) {
