@@ -44,6 +44,7 @@ def main():
     patches = Path(__file__).resolve().parent / "patches"
     base_patch = patches / "0001-mondrian-haptic-engine.patch"
     system_ui_patch = patches / "0002-mondrian-haptic-system-ui.patch"
+    mist_launcher_patch = patches / "0003-mondrian-haptic-mist-launcher-calibration.patch"
     upgrades = [
         (patches / "previous/0002-mondrian-haptic-engine.patch",
          patches / "upgrades/0002-to-0003.patch"),
@@ -53,7 +54,7 @@ def main():
     root = git(framework, "rev-parse", "--show-toplevel")
     if root.returncode or Path(root.stdout.strip()).resolve() != framework:
         raise RuntimeError("frameworks/base must be a Git checkout in the selected ROM root")
-    if not base_patch.is_file() or not system_ui_patch.is_file():
+    if not base_patch.is_file() or not system_ui_patch.is_file() or not mist_launcher_patch.is_file():
         raise RuntimeError("The device tree is missing a Haptic Engine framework patch")
 
     lock_path = Path(git(framework, "rev-parse", "--git-path", "mondrian-haptics.lock").stdout.strip())
@@ -63,46 +64,57 @@ def main():
     with lock_path.open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
 
-        # The extension changes files that are also touched by the base patch, so once
-        # both patches are installed the base patch is no longer independently
-        # reverse-checkable. Detect the final state first to keep repeated runs and
-        # --check idempotent.
+        # Later extensions touch files changed by earlier patches, so only the latest
+        # installed layer is guaranteed to remain independently reverse-checkable.
+        # Detect the final state first, then recognize the completed 0002 state as an
+        # upgrade point for the Mist Launcher calibration.
         if git(framework, "apply", "--reverse", "--check",
-               str(system_ui_patch)).returncode == 0:
+               str(mist_launcher_patch)).returncode == 0:
             print("ok")
             return
 
-        if git(framework, "apply", "--reverse", "--check", str(base_patch)).returncode != 0:
-            result = git(framework, "apply", "--check", str(base_patch))
-            selected_patch = base_patch
-            if result.returncode:
-                # Upgrade only a complete, recognizable previous installation. Preserve local edits.
-                for previous, upgrade in upgrades:
-                    if (previous.is_file() and upgrade.is_file()
-                            and git(framework, "apply", "--reverse", "--check", str(previous)).returncode == 0
-                            and git(framework, "apply", "--check", str(upgrade)).returncode == 0):
-                        selected_patch = upgrade
-                        break
-                else:
+        system_ui_applied = git(
+            framework, "apply", "--reverse", "--check", str(system_ui_patch)).returncode == 0
+
+        if not system_ui_applied:
+            if git(framework, "apply", "--reverse", "--check", str(base_patch)).returncode != 0:
+                result = git(framework, "apply", "--check", str(base_patch))
+                selected_patch = base_patch
+                if result.returncode:
+                    # Upgrade only a complete, recognizable previous installation. Preserve local edits.
+                    for previous, upgrade in upgrades:
+                        if (previous.is_file() and upgrade.is_file()
+                                and git(framework, "apply", "--reverse", "--check", str(previous)).returncode == 0
+                                and git(framework, "apply", "--check", str(upgrade)).returncode == 0):
+                            selected_patch = upgrade
+                            break
+                    else:
+                        raise RuntimeError(
+                            "Framework hooks conflict with this checkout; no changes applied. "
+                            "Review the framework revision or a partially applied patch.\n"
+                            + result.stderr.strip())
+                if args.check:
                     raise RuntimeError(
-                        "Framework hooks conflict with this checkout; no changes applied. "
-                        "Review the framework revision or a partially applied patch.\n"
-                        + result.stderr.strip())
-            if args.check:
-                raise RuntimeError(
-                    "Base Haptic Engine patch is compatible but not applied. "
-                    "Run this script without --check")
-            result = git(framework, "apply", str(selected_patch))
-            if result.returncode:
-                raise RuntimeError(result.stderr.strip())
-            if git(framework, "apply", "--reverse", "--check", str(base_patch)).returncode:
-                raise RuntimeError("Base Haptic Engine patch verification failed; inspect the checkout")
+                        "Base Haptic Engine patch is compatible but not applied. "
+                        "Run this script without --check")
+                result = git(framework, "apply", str(selected_patch))
+                if result.returncode:
+                    raise RuntimeError(result.stderr.strip())
+                if git(framework, "apply", "--reverse", "--check", str(base_patch)).returncode:
+                    raise RuntimeError(
+                        "Base Haptic Engine patch verification failed; inspect the checkout")
+
+            apply_checked_patch(
+                framework,
+                system_ui_patch,
+                args.check,
+                "Haptic Engine SystemUI/Pixel Launcher extension")
 
         apply_checked_patch(
             framework,
-            system_ui_patch,
+            mist_launcher_patch,
             args.check,
-            "Haptic Engine SystemUI/Pixel Launcher extension")
+            "Haptic Engine Mist Launcher Recents calibration")
 
         print("ok")
 
