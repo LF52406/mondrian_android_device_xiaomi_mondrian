@@ -145,3 +145,30 @@ adb shell wm size reset
 adb shell wm density reset
 adb shell wm scaling auto
 ```
+
+## Stabilization patch entry point (temporary test branch)
+
+Run only the original entry point from the Android build root:
+
+```sh
+bash device/xiaomi/mondrian/display-settings/apply-settingslib-patch.sh "$PWD"
+```
+
+It checks all patch targets before changing sources; SettingsLib calls the
+existing BootAnimation script, then this same entry point applies the HWC
+full-frame synchronization and M11A ROI dirty-state kernel fix. Repeated runs
+skip patches already applied. No third wrapper is required. The app is already
+selected by `device.mk`, so the script does not install APKs.
+
+The kernel starts with the original M11A SAFE profile (1) to avoid an
+uncoordinated kernel OFF state while the composer still produces ROI. A
+requested OFF transition must first disable HWC partial composition and retire
+a full-frame present; kernel profile 0 is set only afterward. The HWC wait
+has a finite limit, never an unbounded wait. ON is kernel-first, HWC-second.
+On failure, do not assume the switch succeeded.
+
+This is **test-only** until build/runtime verification on mondrian. Verify
+FHD/WQHD selections, FHD Partial Update unavailable, WQHD ON/OFF without
+flicker while typing/scrolling/animations, reboot state, AOD/HBM/UDFPS, and
+BootAnimation alignment. Capture MondrianResolution, MondrianPartialUpdate,
+and compositor logs on failure.

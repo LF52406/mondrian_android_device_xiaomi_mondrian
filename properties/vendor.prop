@@ -7,3 +7,6 @@ persist.vendor.sys.fp.fod.size.width_height=248,248
 
 # System properties
 ro.product.property_source_order=odm,vendor,product,system_ext,system
+
+# Require coordinated M11A HWC/kernel Partial Update transactions.
+ro.vendor.mondrian.display_control=true

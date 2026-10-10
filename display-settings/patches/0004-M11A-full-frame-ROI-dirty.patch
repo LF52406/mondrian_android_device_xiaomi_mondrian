@@ -1,0 +1,22 @@
+diff --git a/qcom/opensource/display-drivers/msm/sde/sde_crtc.c b/qcom/opensource/display-drivers/msm/sde/sde_crtc.c
+--- a/qcom/opensource/display-drivers/msm/sde/sde_crtc.c
++++ b/qcom/opensource/display-drivers/msm/sde/sde_crtc.c
+@@ -890,6 +890,18 @@ static int _sde_crtc_set_crtc_roi(struct drm_crtc *crtc,
+ 	 * frame: DSI never changes geometry after SDE has prepared it.
+ 	 */
+ 	if (_sde_crtc_m11a_force_full_frame(crtc_state)) {
++		/* Retained partial ROI requires reprogramming SSPP destinations.
++		 * The composer must finish a full-frame present before requesting
++		 * profile 0. Kernel ROI rewriting cannot expand cropped HWC planes.
++		 */
++		if (crtc_state->user_roi_list.num_rects ||
++				crtc_state->cached_user_roi_list.num_rects ||
++				!sde_kms_rect_is_null(crtc_roi)) {
++			rc = msm_property_set_dirty(&sde_crtc->property_info,
++					&crtc_state->property_state, CRTC_PROP_ROI_V1);
++			if (rc)
++				return rc;
++		}
+ 		/*
+ 		 * Connector pre-kickoff programs DSI from connector-state ROI, while
+ 		 * LM/encoder programming uses the CRTC ROI. Clone each attached

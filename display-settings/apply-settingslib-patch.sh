@@ -9,6 +9,55 @@ framework_dir="$rom_root/frameworks/base"
 settingslib_patch="$script_dir/patches/0001-SettingsLib-mondrian-logical-density.patch"
 settingslib_target="packages/SettingsLib/src/com/android/settingslib/display/DisplayDensityUtils.java"
 bootanimation_script="$script_dir/apply-bootanimation-patch.sh"
+bootanimation_patch="$script_dir/patches/0002-BootAnimation-mondrian-logical-geometry.patch"
+hwc_dir="$rom_root/hardware/qcom-caf/sm8450/display"
+hwc_patch="$script_dir/patches/0003-HWC-mondrian-partial-update-handshake.patch"
+kernel_dir="$rom_root/kernel/xiaomi/sm8450-modules"
+kernel_patch="$script_dir/patches/0004-M11A-full-frame-ROI-dirty.patch"
+
+# One public entry point. No apply-display-patches.sh wrapper is required.
+# Preflight all 4 patches before mutating any checkout.
+preflight_patch() {
+    local project="$1" patch="$2" name="$3"
+    if git -C "$project" apply --reverse --check "$patch" 2>/dev/null; then
+        echo "==> $name: already applied"
+    elif git -C "$project" apply --check "$patch"; then
+        echo "==> $name: ready"
+    else
+        echo "Cannot apply $name to $project; no sources were changed." >&2
+        exit 1
+    fi
+}
+
+apply_patch_once() {
+    local project="$1" patch="$2" name="$3"
+    if git -C "$project" apply --reverse --check "$patch" 2>/dev/null; then
+        echo "==> $name: already applied"
+    else
+        git -C "$project" apply "$patch"
+        echo "==> $name: applied"
+    fi
+}
+
+if [[ ! -f "$hwc_dir/composer/hwc_session.cpp" ]]; then
+    echo "Missing Qualcomm HWC source at $hwc_dir" >&2
+    exit 1
+fi
+if [[ ! -f "$kernel_dir/qcom/opensource/display-drivers/msm/sde/sde_crtc.c" ]]; then
+    echo "Missing Qualcomm kernel modules at $kernel_dir" >&2
+    exit 1
+fi
+for repo_dir in "$framework_dir" "$hwc_dir" "$kernel_dir"; do
+    repo_root="$(git -C "$repo_dir" rev-parse --show-toplevel)" || exit 1
+    if [[ "$(cd "$repo_dir" && pwd -P)" != "$(cd "$repo_root" && pwd -P)" ]]; then
+        echo "Expected independent Git checkout: $repo_dir" >&2
+        exit 1
+    fi
+done
+preflight_patch "$framework_dir" "$settingslib_patch" "SettingsLib"
+preflight_patch "$framework_dir" "$bootanimation_patch" "BootAnimation"
+preflight_patch "$hwc_dir" "$hwc_patch" "Qualcomm HWC"
+preflight_patch "$kernel_dir" "$kernel_patch" "M11A ROI kernel"
 
 if [[ ! -f "$framework_dir/$settingslib_target" ]]; then
     echo "Run from the ROM root, or pass its path as the first argument." >&2
@@ -46,5 +95,10 @@ echo "==> Mondrian BootAnimation logical-geometry patch"
 bash "$bootanimation_script" "$rom_root"
 
 echo
-echo "Mondrian display framework patches are ready."
-echo "Build Settings/MondrianDisplaySettings and BootAnimation as required."
+echo "==> Mondrian Qualcomm HWC and kernel ROI stabilization"
+apply_patch_once "$hwc_dir" "$hwc_patch" "Qualcomm HWC"
+apply_patch_once "$kernel_dir" "$kernel_patch" "M11A ROI kernel"
+
+echo
+echo "All Mondrian display source patches are ready."
+echo "MondrianDisplaySettings is installed by device.mk during the ROM build."

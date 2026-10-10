@@ -1,2 +1,3 @@
-# Mondrian display controls
+# App-owned requests and init-owned HWC acknowledgement are separate labels.
 system_restricted_prop(mondrian_display_prop)
+system_restricted_prop(mondrian_display_status_prop)
