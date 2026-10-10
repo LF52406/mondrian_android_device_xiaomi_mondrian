@@ -97,12 +97,18 @@ final class PartialUpdateBackend {
             throw new IOException("M11A partial-update control is unavailable");
         }
 
-        String previousDesired = SystemProperties.get(PROP_DESIRED, "");
+        // The persistent property has SELinux type "bool": restoring an
+        // absent/empty value is invalid and would mask the original error.
+        final boolean previousDesired = desiredEnabled();
         try {
             setDesiredEnabled(enabled);
             requestProfile(enabled ? PROFILE_SAFE : PROFILE_DISABLED);
         } catch (Exception failure) {
-            SystemProperties.set(PROP_DESIRED, previousDesired);
+            try {
+                setDesiredEnabled(previousDesired);
+            } catch (RuntimeException restoreFailure) {
+                failure.addSuppressed(restoreFailure);
+            }
             // Supersede any late transition with a conservative OFF request.
             // The HWC worker checks the generation before it can enable ROI.
             try {
