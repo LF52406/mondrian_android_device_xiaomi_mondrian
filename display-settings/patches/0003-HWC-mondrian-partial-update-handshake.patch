@@ -260,7 +260,7 @@ diff --git a/composer/hwc_session.h b/composer/hwc_session.h
 index 270275e..b84c708 100644
 --- a/composer/hwc_session.h
 +++ b/composer/hwc_session.h
-@@ -36,12 +36,14 @@
+@@ -41,12 +41,14 @@
  #include <display_config.h>
  #include <vector>
  #include <queue>
