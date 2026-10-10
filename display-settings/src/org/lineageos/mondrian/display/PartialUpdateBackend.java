@@ -174,7 +174,9 @@ final class PartialUpdateBackend {
                 UUID.randomUUID().toString() + ":" + PROFILE_DISABLED);
 
         IOException failure = new IOException(
-                "Partial-update HWC/kernel transaction failed for profile " + profile);
+                "Partial-update HWC/kernel transaction failed for profile " + profile
+                        + ", status=" + SystemProperties.get(PROP_STATUS, "<none>")
+                        + ", actualKernelProfile=" + readProfileOrUnknown());
         if (lastReadFailure != null) {
             failure.addSuppressed(lastReadFailure);
         }
