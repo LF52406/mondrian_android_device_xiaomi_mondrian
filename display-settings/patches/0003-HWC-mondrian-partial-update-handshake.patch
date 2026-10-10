@@ -260,7 +260,7 @@ diff --git a/composer/hwc_session.h b/composer/hwc_session.h
 index 270275e..b84c708 100644
 --- a/composer/hwc_session.h
 +++ b/composer/hwc_session.h
-@@ -36,10 +36,12 @@
+@@ -36,12 +36,14 @@
  #include <display_config.h>
  #include <vector>
  #include <queue>
@@ -275,7 +275,7 @@ index 270275e..b84c708 100644
  #include <core/display_interface.h>
  
  #include "hwc_callbacks.h"
-@@ -596,6 +598,14 @@ class HWCSession : hwc2_device_t, HWCUEventListener, public qClient::BnQClient,
+@@ -596,6 +598,13 @@ class HWCSession : hwc2_device_t, HWCUEventListener, public qClient::BnQClient,
    void PostCommitUnlocked(hwc2_display_t display, const shared_ptr<Fence> &retire_fence,
                            HWC2::Error status);
    void PostCommitLocked(hwc2_display_t display, shared_ptr<Fence> &retire_fence);
