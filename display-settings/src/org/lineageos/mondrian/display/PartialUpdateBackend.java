@@ -131,7 +131,10 @@ final class PartialUpdateBackend {
     }
 
     private boolean desiredEnabled() {
-        return "1".equals(SystemProperties.get(PROP_DESIRED, ""));
+        // Native WQHD+ ships with the M11A SAFE profile enabled. On a clean
+        // install, prefer Partial Update ON; an explicit user OFF (0) persists
+        // across FHD+/WQHD+ switches and reboots.
+        return !"0".equals(SystemProperties.get(PROP_DESIRED, ""));
     }
 
     private void setDesiredEnabled(boolean enabled) {
