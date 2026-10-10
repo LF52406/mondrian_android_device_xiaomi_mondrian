@@ -163,9 +163,18 @@ selected by `device.mk`, so the script does not install APKs.
 The kernel starts with the original M11A SAFE profile (1) to avoid an
 uncoordinated kernel OFF state while the composer still produces ROI. A
 requested OFF transition must first disable HWC partial composition and retire
-a full-frame present; kernel profile 0 is set only afterward. The HWC wait
-has a finite limit, never an unbounded wait. ON is kernel-first, HWC-second.
-On failure, do not assume the switch succeeded.
+a full-frame present; kernel profile 0 is set only afterward. HWC checks that
+the display is awake and refuses success without a retire fence; each frame
+wait has a finite bound. ON is kernel-first, HWC-second. The app deadline
+covers the combined HWC+init stages, but introduces **no intentional wait**
+when a requested state is already verified. An unsuccessful operation must
+never be presented as applied.
+
+Opening the resolution screen performs only a WM/status read. It does not
+enqueue an optional HWC reconciliation ahead of subsequent card presses.
+Boot recovery, real resolution transitions and Partial Update toggle operations
+remain responsible for writing the hardware state. The persisted preference
+is a typed bool and is always restored as '0' or '1' on failure.
 
 This is **test-only** until build/runtime verification on mondrian. Verify
 FHD/WQHD selections, FHD Partial Update unavailable, WQHD ON/OFF without
