@@ -19,7 +19,7 @@ new file mode 100644
 index 0000000..0a5f11c
 --- /dev/null
 +++ b/composer/hwc_mondrian.cpp
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,227 @@
 +/* Copyright (C) 2026 The LineageOS Project
 + * SPDX-License-Identifier: Apache-2.0
 + */
@@ -127,7 +127,8 @@ index 0000000..0a5f11c
 +  {
 +    SEQUENCE_WAIT_SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
 +    HWCDisplay *display = hwc_display_[HWC_DISPLAY_PRIMARY];
-+    if (!display || pending_power_mode_[HWC_DISPLAY_PRIMARY]) return false;
++    if (!display || pending_power_mode_[HWC_DISPLAY_PRIMARY] ||
++        display->GetCurrentPowerMode() != HWC2::PowerMode::On) return false;
 +
 +    const DisplayError error = display->ControlPartialUpdate(enable, &pending);
 +    if (error != kErrorNone) {
@@ -146,11 +147,13 @@ index 0000000..0a5f11c
 +      SEQUENCE_WAIT_SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
 +      if (mondrian_stop_ || !callbacks_.IsClientConnected() ||
 +          !hwc_display_[HWC_DISPLAY_PRIMARY] ||
-+          pending_power_mode_[HWC_DISPLAY_PRIMARY]) return false;
++          pending_power_mode_[HWC_DISPLAY_PRIMARY] ||
++          hwc_display_[HWC_DISPLAY_PRIMARY]->GetCurrentPowerMode() !=
++              HWC2::PowerMode::On) return false;
 +
 +      clients_waiting_for_commit_[HWC_DISPLAY_PRIMARY].set(kClientPartialUpdate);
 +      callbacks_.Refresh(HWC_DISPLAY_PRIMARY);
-+      const int waited = locker_[HWC_DISPLAY_PRIMARY].WaitFinite(900);
++      const int waited = locker_[HWC_DISPLAY_PRIMARY].WaitFinite(450);
 +      if (waited != 0) {
 +        clients_waiting_for_commit_[HWC_DISPLAY_PRIMARY].reset(kClientPartialUpdate);
 +        DLOGE("Mondrian: full-frame present timeout: %d", waited);
@@ -164,7 +167,11 @@ index 0000000..0a5f11c
 +      retire = retire_fence_[HWC_DISPLAY_PRIMARY];
 +      retire_fence_[HWC_DISPLAY_PRIMARY] = nullptr;
 +    }
-+    const int error = Fence::Wait(retire, 1200);
++    if (!retire) {
++      DLOGE("Mondrian: missing retire fence after HWC present");
++      return false;
++    }
++    const int error = Fence::Wait(retire, 500);
 +    if (error != 0) {
 +      DLOGE("Mondrian: retire fence failed: %d", error);
 +      return false;
