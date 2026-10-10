@@ -75,8 +75,8 @@ Partial Update is intentionally available only at WQHD+ (1440 × 3200):
 
 - at WQHD+, Switch ON requests SAFE profile 1 and Switch OFF requests profile 0;
 - at FHD+, the runtime profile is forced to 0 and the Switch is disabled/off;
-- the user's WQHD+ preference is stored separately, so returning from FHD+ restores
-  the previous ON/OFF preference when possible.
+- on a clean installation, WQHD+ prefers Partial Update ON; an explicit user
+  OFF selection is persisted, including through FHD+ and across reboot.
 
 The app does **not** write the root-owned module parameter directly. It writes only
 the dedicated Mondrian system properties. `init.mondrian.display.rc` performs the
@@ -154,14 +154,19 @@ Run only the original entry point from the Android build root:
 bash device/xiaomi/mondrian/display-settings/apply-settingslib-patch.sh "$PWD"
 ```
 
-It checks all patch targets before changing sources; SettingsLib calls the
-existing BootAnimation script, then this same entry point applies the HWC
-full-frame synchronization and M11A ROI dirty-state kernel fix. Repeated runs
-skip patches already applied. No third wrapper is required. The app is already
+It checks independent patch targets before changing sources, runs the existing
+BootAnimation script, and applies the HWC base, HWC worker recovery and M11A ROI
+kernel patches. It can upgrade a previously patched HWC checkout without
+replacing or resetting it. Repeated runs skip applied patches. No third wrapper
+is required. The app is already
 selected by `device.mk`, so the script does not install APKs.
 
 The kernel starts with the original M11A SAFE profile (1) to avoid an
-uncoordinated kernel OFF state while the composer still produces ROI. A
+uncoordinated kernel OFF state while the composer still produces ROI. The HWC
+worker no longer depends on the optional `ro.vendor.mondrian.display_control`
+property (absent from the installed build despite being present in vendor.prop).
+It publishes `vendor.mondrian.display.status=ready` at startup; each request
+then reports a generation-specific `:ok` or `:error` status. A
 requested OFF transition must first disable HWC partial composition and retire
 a full-frame present; kernel profile 0 is set only afterward. HWC checks that
 the display is awake and refuses success without a retire fence; each frame
@@ -176,7 +181,17 @@ Boot recovery, real resolution transitions and Partial Update toggle operations
 remain responsible for writing the hardware state. The persisted preference
 is a typed bool and is always restored as '0' or '1' on failure.
 
-This is **test-only** until build/runtime verification on mondrian. Verify
+This is **test-only** until build/runtime verification on mondrian.
+
+Static checks and the host test suite can be run using:
+
+```sh
+bash device/xiaomi/mondrian/display-settings/tests/run-host-tests.sh
+```
+
+The tests now include a two-stage HWC patch replay, in-place upgrade and Soong
+brace regression. These checks do not substitute for compiling the full display
+service and testing real panel transitions. Verify
 FHD/WQHD selections, FHD Partial Update unavailable, WQHD ON/OFF without
 flicker while typing/scrolling/animations, reboot state, AOD/HBM/UDFPS, and
 BootAnimation alignment. Capture MondrianResolution, MondrianPartialUpdate,
