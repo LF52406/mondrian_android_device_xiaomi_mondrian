@@ -59,6 +59,11 @@ mondrian remains pending; no rendered device screenshot is claimed.
 
 - The engine is initially OFF. Turning it on starts with Balanced at 60%.
 - Soft, Balanced and Crisp use different primitive choices and compositions.
+- Direct Launcher3 Recents scrolling is calibrated separately on mondrian: Mist Launcher
+  emits a single LOW_TICK at scale 0.6 for card paging/quick-switch, and the Crisp
+  profile maps only that exact `com.android.launcher3` signature to CLICK because the
+  device's TICK primitive is substantially less perceptible there. Pixel Launcher
+  (`com.google.android.apps.nexuslauncher`) keeps the generic direct-haptic mapping.
 - The slider stores every integer from 0 to 100. The visual dots are guides, not
   three discrete levels. The provisional gain is `(percent / 100)^1.35`.
 - 0 mutes engine-owned events; 100 reaches the recipe's configured maximum.
