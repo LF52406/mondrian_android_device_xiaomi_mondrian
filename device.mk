@@ -19,6 +19,11 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     MondrianDisplaySettings
 
+# Mondrian only: keep Wi-Fi Display off Qualcomm HWC until its GPU buffer usage is fixed.
+# Requires display-settings/apply-miracast-gpu-vds-patch.sh in frameworks/native.
+PRODUCT_SYSTEM_PROPERTIES += \
+    debug.sf.mondrian_force_gpu_wfd=true
+
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/audio/mixer_paths_waipio_mtp.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio/sku_cape/mixer_paths_waipio_mtp.xml \
     $(LOCAL_PATH)/audio/resourcemanager_waipio_mtp.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio/sku_cape/resourcemanager_waipio_mtp.xml \
