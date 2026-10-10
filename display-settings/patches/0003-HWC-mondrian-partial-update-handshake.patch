@@ -2,7 +2,7 @@ diff --git a/composer/Android.bp b/composer/Android.bp
 index 918dd5e..3cd0ab1 100644
 --- a/composer/Android.bp
 +++ b/composer/Android.bp
-@@ -95,3 +95,10 @@ prebuilt_etc_xml {
+@@ -95,3 +95,11 @@ prebuilt_etc_xml {
      sub_dir: "vintf/manifest",
      vendor: true,
  }
