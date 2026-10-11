@@ -1,0 +1,53 @@
+diff --git a/sdm/libs/core/display_builtin.cpp b/sdm/libs/core/display_builtin.cpp
+--- a/sdm/libs/core/display_builtin.cpp
++++ b/sdm/libs/core/display_builtin.cpp
+@@ -69,6 +69,9 @@
+ #include <iomanip>
+ #include <algorithm>
+ #include <functional>
++#include <fstream>
++#include <cstring>
++#include <sys/system_properties.h>
+ #include <map>
+ #include <string>
+ #include <vector>
+@@ -1246,6 +1249,20 @@
+   return kErrorNone;
+ }
+ 
++// The M11A OFF setting must not be overridden by internal Qualcomm paths,
++// including color sampling, video-to-command transitions and DPPS callbacks.
++// The property is an immediate HWC policy vote; the kernel readback covers a
++// composer crash/restart before the property has been initialized.
++static bool MondrianRoiMustStayOff() {
++  char allow[PROP_VALUE_MAX] = {};
++  __system_property_get("vendor.mondrian.display.roi_allowed", allow);
++  if (std::strcmp(allow, "0") == 0) return true;
++
++  std::ifstream profile("/sys/module/msm_drm/parameters/m11a_partial_update_profile");
++  int value = -1;
++  return static_cast<bool>(profile >> value) && value == 0;
++}
++
+ DisplayError DisplayBuiltIn::ControlPartialUpdate(bool enable, uint32_t *pending) {
+   ClientLock lock(disp_mutex_);
+   return ControlPartialUpdateLocked(enable, pending);
+@@ -1256,6 +1273,18 @@
+     return kErrorParameters;
+   }
+ 
++  if (enable && MondrianRoiMustStayOff()) {
++    // Fail closed on ROI without failing unrelated Qualcomm callers that
++    // legitimately re-arm partial update after histogram or mode changes.
++    *pending = partial_update_control_ ? 1 : 0;
++    if (partial_update_control_) {
++      partial_update_control_ = false;
++      validated_ = false;
++      DLOGI("Mondrian: suppressed internal ROI enable while full-frame is required");
++    }
++    return kErrorNone;
++  }
++
+   if (dpps_info_.disable_pu_ && enable) {
+     // Nothing to be done.
+     DLOGI("partial update is disabled by DPPS for display id = %d", display_id_);
