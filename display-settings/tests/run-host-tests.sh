@@ -81,11 +81,9 @@ assert transition.index("SetRoiAllowed(false)") < transition.index(
 assert transition.index("ProgramKernelProfile(request, profile)") < transition.index(
     "SetRoiAllowed(true)")
 fallback = transition[transition.index("A failed HWC enable"):]
-assert "if (MondrianCommitPartialUpdate(false)) {" in fallback
-guard = fallback.index("if (MondrianCommitPartialUpdate(false)) {")
-write = fallback.index("ProgramKernelProfile(request, 0)")
-assert guard < write
-assert "OFF fallback skipped; HWC full frame not confirmed" in fallback
+assert "ProgramKernelProfile(request, 0)" not in fallback
+assert "if (!MondrianCommitPartialUpdate(false)) {" in fallback
+assert "kernel stays at profile 1" in fallback
 assert "last_ok = false" in code
 assert "if (!display_on)" in code
 assert "previous.clear();" in code
