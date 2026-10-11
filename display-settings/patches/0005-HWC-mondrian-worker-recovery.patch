@@ -1,7 +1,7 @@
 diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
 --- a/composer/hwc_mondrian.cpp
 +++ b/composer/hwc_mondrian.cpp
-@@ -18,7 +18,6 @@
+@@ -18,12 +18,12 @@
  namespace sdm {
  namespace {
  
@@ -9,7 +9,28 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
  constexpr char kRequest[] = "vendor.mondrian.display.request";
  constexpr char kStatus[] = "vendor.mondrian.display.status";
  constexpr char kProfile[] = "vendor.mondrian.display.profile";
-@@ -63,12 +62,20 @@
+ constexpr char kSerial[] = "vendor.mondrian.display.profile_serial";
+ constexpr char kApplied[] = "vendor.mondrian.display.profile_applied";
++constexpr char kRoiAllowed[] = "vendor.mondrian.display.roi_allowed";
+ constexpr char kProfilePath[] =
+     "/sys/module/msm_drm/parameters/m11a_partial_update_profile";
+ 
+@@ -33,6 +33,14 @@
+   return value;
+ }
+ 
++bool SetRoiAllowed(bool enabled) {
++  if (property_set(kRoiAllowed, enabled ? "1" : "0") != 0) {
++    DLOGE("Mondrian: unable to publish hard ROI vote %d", enabled ? 1 : 0);
++    return false;
++  }
++  return true;
++}
++
+ bool ParseRequest(const std::string &request, int *profile) {
+   if (!profile || request.size() != 38 || request[36] != ':' ||
+       (request[37] != '0' && request[37] != '1')) {
+@@ -63,12 +71,20 @@
    // out, do not queue another one until its exact generation has drained.
    static std::string pending;
    if (!pending.empty()) {
@@ -31,7 +52,7 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
    const std::string serial = request.substr(0, 36);
    const std::string expected = serial + ":" + std::to_string(profile);
    pending = expected;
-@@ -76,6 +83,7 @@
+@@ -76,6 +92,7 @@
    if (property_set(kSerial, serial.c_str()) != 0 ||
        property_set(kProfile, "") != 0 ||
        property_set(kProfile, profile ? "1" : "0") != 0) {
@@ -39,7 +60,7 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
      pending.clear();
      return false;
    }
-@@ -91,8 +99,9 @@
+@@ -91,8 +108,9 @@
      std::this_thread::sleep_for(std::chrono::milliseconds(10));
    } while (std::chrono::steady_clock::now() < deadline);
  
@@ -51,7 +72,7 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
    return false;
  }
  
-@@ -99,7 +108,10 @@
+@@ -99,7 +117,10 @@
  }  // namespace
  
  bool HWCSession::MondrianCommitPartialUpdate(bool enable) {
@@ -63,7 +84,7 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
  
    uint32_t pending = 0;
    {
-@@ -106,7 +118,10 @@
+@@ -106,7 +127,10 @@
      SEQUENCE_WAIT_SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
      HWCDisplay *display = hwc_display_[HWC_DISPLAY_PRIMARY];
      if (!display || pending_power_mode_[HWC_DISPLAY_PRIMARY] ||
@@ -75,7 +96,7 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
  
      const DisplayError error = display->ControlPartialUpdate(enable, &pending);
      if (error != kErrorNone) {
-@@ -131,7 +146,7 @@
+@@ -131,7 +155,7 @@
  
        clients_waiting_for_commit_[HWC_DISPLAY_PRIMARY].set(kClientPartialUpdate);
        callbacks_.Refresh(HWC_DISPLAY_PRIMARY);
@@ -84,7 +105,7 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
        if (waited != 0) {
          clients_waiting_for_commit_[HWC_DISPLAY_PRIMARY].reset(kClientPartialUpdate);
          DLOGE("Mondrian: full-frame present timeout: %d", waited);
-@@ -149,7 +164,7 @@
+@@ -149,7 +173,7 @@
        DLOGE("Mondrian: missing retire fence after HWC present");
        return false;
      }
@@ -93,11 +114,19 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
      if (error != 0) {
        DLOGE("Mondrian: retire fence failed: %d", error);
        return false;
-@@ -161,10 +176,16 @@
+@@ -159,60 +183,120 @@
+ }
+ 
  bool HWCSession::ProcessMondrianPartialUpdate(const std::string &request, int profile) {
-   // OFF is the synchronization state. This is intentionally done for both
-   // directions, so no stale cropped planes can survive a failed/old request.
+-  // OFF is the synchronization state. This is intentionally done for both
+-  // directions, so no stale cropped planes can survive a failed/old request.
 -  if (!MondrianCommitPartialUpdate(false)) return false;
++  // First veto every internal SDM attempt to re-enable ROI. The vote is
++  // enforced by the shared SDM core, even across color-sampling callbacks.
++  if (!SetRoiAllowed(false)) return false;
++
++  // Never write kernel profile 0 until the compositor has produced and
++  // retired a full-frame commit with ROI composition disabled.
 +  if (!MondrianCommitPartialUpdate(false)) {
 +    DLOGE("Mondrian: full-frame HWC retirement failed for profile %d", profile);
 +    return false;
@@ -112,7 +141,38 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
    if (ReadProperty(kRequest) != request || mondrian_stop_) return false;
  
    if (profile == 0) {
-@@ -187,10 +208,16 @@
+-    // HWC is already disabled and the full frame retired before kernel OFF.
++    // Both HWC and the kernel are now in the full-frame state; the vote
++    // remains 0 and applies to all subsequent internal Qualcomm callers.
+     return true;
+   }
+ 
+-  // Kernel ROI capability is live. HWC may now generate partial composition.
++  // The kernel now supports ROI. Release the HWC hard vote only at this
++  // point; never allow an HWC ROI commit while kernel profile 0 is active.
++  if (!SetRoiAllowed(true)) return false;
+   if (MondrianCommitPartialUpdate(true) && ReadProperty(kRequest) == request) {
+     return true;
+   }
+ 
+-  // Enabling HWC failed after kernel profile 1. Return to the conservative
+-  // state while the same generation is still current.
+-  if (ReadProperty(kRequest) == request) {
+-    MondrianCommitPartialUpdate(false);
+-    ProgramKernelProfile(request, 0);
++  // A failed HWC enable must never force kernel 0 without a *new* completed
++  // full-frame retirement. When that cannot be proven, leave kernel 1.
++  if (ReadProperty(kRequest) == request && !mondrian_stop_) {
++    if (!SetRoiAllowed(false)) return false;
++    if (MondrianCommitPartialUpdate(false)) {
++      if (!ProgramKernelProfile(request, 0)) {
++        DLOGE("Mondrian: verified OFF fallback could not change kernel profile");
++      }
++    } else {
++      DLOGE("Mondrian: OFF fallback skipped; HWC full frame not confirmed");
++    }
+   }
+   return false;
  }
  
  void HWCSession::StartMondrianPartialUpdate() {
@@ -126,26 +186,72 @@ diff --git a/composer/hwc_mondrian.cpp b/composer/hwc_mondrian.cpp
    mondrian_stop_ = false;
 -  property_set(kStatus, "offline");
 +  DLOGI("Mondrian: starting HWC ROI transaction worker");
++  // Recover the policy vote after a composer crash without relying on the
++  // optional ro.vendor boot property. Kernel profile 0 is always hard OFF.
++  if (!SetRoiAllowed(!KernelProfileIs(0))) {
++    DLOGE("Mondrian: unable to initialize SDM ROI policy at startup");
++  }
 +  if (property_set(kStatus, "ready") != 0) {
 +    DLOGE("Mondrian: cannot publish ROI worker ready status");
 +  }
    mondrian_thread_ = std::thread([this] {
      std::string previous;
++    bool last_ok = false;
  
-@@ -211,8 +238,16 @@
+     while (!mondrian_stop_) {
+-      // On boot or composer restart, wait until SurfaceFlinger has registered
+-      // its callback. Otherwise Refresh() cannot provide the retire fence that
+-      // makes an OFF transition safe.
+       if (!callbacks_.IsClientConnected()) {
+-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
++        last_ok = false;
++        previous.clear();
++        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+         continue;
+       }
++      // Force a revalidation after screen power OFF / DOZE, including AOD.
++      // A failed request is retried on wake with the same generation.
++      bool display_on = false;
++      {
++        SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
++        HWCDisplay *display = hwc_display_[HWC_DISPLAY_PRIMARY];
++        display_on = display && !pending_power_mode_[HWC_DISPLAY_PRIMARY] &&
++            display->GetCurrentPowerMode() == HWC2::PowerMode::On;
++      }
++      if (!display_on) {
++        last_ok = false;
++        previous.clear();
++        std::this_thread::sleep_for(std::chrono::milliseconds(250));
++        continue;
++      }
  
-         // A superseded generation must never publish state for the new one.
+       const std::string request = ReadProperty(kRequest);
+       int profile = -1;
+-      if (request != previous && ParseRequest(request, &profile)) {
++      if (ParseRequest(request, &profile) && (request != previous || !last_ok)) {
+         previous = request;
+         const bool ok = ProcessMondrianPartialUpdate(request, profile);
+ 
+-        // A superseded generation must never publish state for the new one.
++        // No stale generation can acknowledge a newer request.
          if (ReadProperty(kRequest) == request) {
 -          property_set(kStatus, (request + (ok ? ":ok" : ":error")).c_str());
++          last_ok = ok;
 +          if (property_set(kStatus, (request + (ok ? ":ok" : ":error")).c_str()) != 0) {
 +            DLOGE("Mondrian: failed to report profile %d transaction status", profile);
 +          }
++        } else {
++          last_ok = false;
          }
 +        if (!ok) {
 +          DLOGE("Mondrian: profile %d transaction failed (request=%s)",
 +                profile, request.c_str());
 +        } else {
 +          DLOGI("Mondrian: profile %d transaction complete", profile);
++        }
++        // Do not spin on failure: next attempt re-verifies HWC and kernel.
++        if (!ok) {
++          std::this_thread::sleep_for(std::chrono::milliseconds(400));
 +        }
        }
        std::this_thread::sleep_for(std::chrono::milliseconds(25));
