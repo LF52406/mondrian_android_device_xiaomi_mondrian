@@ -80,7 +80,7 @@ assert transition.index("SetRoiAllowed(false)") < transition.index(
     "MondrianCommitPartialUpdate(false)")
 assert transition.index("ProgramKernelProfile(request, profile)") < transition.index(
     "SetRoiAllowed(true)")
-fallback = transition[transition.index("A failed HWC enable"):]
+fallback = transition[transition.index("Failed ON must never program kernel profile 0"):]
 assert "ProgramKernelProfile(request, 0)" not in fallback
 assert "if (!MondrianCommitPartialUpdate(false)) {" in fallback
 assert "kernel stays at profile 1" in fallback
