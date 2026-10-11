@@ -90,6 +90,31 @@ WQHD+ Partial Update preference does not falsely report that the resolution chan
 failed; the UI displays the actual sysfs state and later resume/boot reconciliation
 can retry it.
 
+## Fail-safe full-frame OFF and resume recovery (2026-10-11 test branch)
+
+A request to enter kernel M11A profile 0 must follow the complete sequence:
+
+1. Publish a hard `vendor.mondrian.display.roi_allowed=0` vote before disabling
+   hardware composer ROI. The patched SDM `ControlPartialUpdateLocked()` rejects
+   internal re-enables from color sampling, mode transitions and DPPS.
+2. Disable composer ROI and wait for a real present and retire fence. A failed
+   wait **must not** change the kernel profile.
+3. Only after successful full-frame retirement, write kernel profile 0 through
+   init and read back the profile and matching generation acknowledgement.
+4. For ON, program kernel profile 1 first; release the SDM hard vote, then
+   enable and retire an ROI-capable HWC frame. An error during this step must
+   never force kernel profile 0 without a *new* verified full-frame present.
+
+The worker retries failed requests on a bounded interval while the display is
+awake. Screen OFF/DOZE resets the verification state; the same request is
+rechecked on wake. Hardware errors still fail closed; a permanent sysfs or
+compositor failure cannot be automatically made safe through timeouts.
+
+The additional patch is `0006-SDM-mondrian-ROI-off-vote.patch`. The original
+`apply-settingslib-patch.sh` now applies all **six** named patch files (0001
+through 0006) in its existing one-command workflow. No additional installer
+or separate device-tree fork is required.
+
 ## Search and security
 
 The Settings entry, search provider and dynamic resolution summary remain in the
