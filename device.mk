@@ -50,9 +50,19 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/properties/build_CN.prop:$(TARGET_COPY_OUT_RECOVERY)/root/vendor/odm/etc/build_CN.prop \
     $(LOCAL_PATH)/properties/build_GL.prop:$(TARGET_COPY_OUT_RECOVERY)/root/vendor/odm/etc/build_GL.prop
 
-# Vibrator
-$(call inherit-product, device/xiaomi/mondrian/haptic-settings/product.mk)
+# Haptic Engine
+# Keep this in device.mk itself so every mondrian product that inherits the device
+# configuration installs the app/overlay and prepares the framework automatically.
+_mondrian_haptic_patch := $(strip $(shell python3 device/xiaomi/mondrian/haptic-settings/apply-framework-patch.py --rom-root "$(abspath .)" 2>&1))
+ifneq ($(_mondrian_haptic_patch),ok)
+$(error Mondrian Haptic Engine integration failed: $(_mondrian_haptic_patch))
+endif
 
+PRODUCT_PACKAGES += \
+    MondrianHapticSettings \
+    MondrianHapticEngineOverlay
+
+# Vibrator firmware
 PRODUCT_COPY_FILES += \
     vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_0.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_0.bin \
     vendor/xiaomi/mondrian/proprietary/vendor/etc/vibrator/primitive_effect_1.bin:$(TARGET_COPY_OUT_VENDOR)/etc/vibrator/primitive_effect_1.bin \

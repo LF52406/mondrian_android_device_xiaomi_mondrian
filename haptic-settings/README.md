@@ -6,11 +6,18 @@ values, not measurements or a completed physical calibration.
 
 ## Integration
 
-`device.mk` inherits `haptic-settings/product.mk`. During product configuration it
-runs the idempotent framework preparation script, then installs
-`MondrianHapticSettings` and `MondrianHapticEngineOverlay`. No changes to a ROM's
-Settings application are required when it retains AOSP external dashboard tiles.
-The Activity registers in the Sound category via `IA_SETTINGS`.
+`device.mk` directly runs the idempotent framework preparation script during
+product configuration and unconditionally adds `MondrianHapticSettings` and
+`MondrianHapticEngineOverlay` for mondrian. Keeping the integration in the device
+makefile avoids relying on a nested product-fragment inheritance path: a normal
+clean checkout/build either includes the complete Haptic Engine or stops product
+configuration with an explicit integration error. The standalone
+`haptic-settings/product.mk` remains available for compatibility with external
+product setups, but the standard mondrian product does not depend on it.
+
+No changes to a ROM's Settings application are required when it retains AOSP
+external dashboard tiles. The Activity registers in the Sound category via
+`IA_SETTINGS`.
 
 The patch lives in this device tree; it does not require a separate MistOS or
 Evolution X framework fork. Preparation changes the framework working tree, not
