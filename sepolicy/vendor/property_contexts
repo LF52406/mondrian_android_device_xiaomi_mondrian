@@ -3,3 +3,4 @@ vendor.mondrian.display.status u:object_r:vendor_mondrian_display_state_prop:s0 
 vendor.mondrian.display.profile u:object_r:vendor_mondrian_display_state_prop:s0 exact string
 vendor.mondrian.display.profile_serial u:object_r:vendor_mondrian_display_state_prop:s0 exact string
 vendor.mondrian.display.profile_applied u:object_r:vendor_mondrian_display_state_prop:s0 exact string
+vendor.mondrian.display.roi_allowed u:object_r:vendor_mondrian_display_state_prop:s0 exact string
