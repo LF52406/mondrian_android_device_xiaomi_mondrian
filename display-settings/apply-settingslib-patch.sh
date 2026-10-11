@@ -13,6 +13,7 @@ bootanimation_patch="$script_dir/patches/0002-BootAnimation-mondrian-logical-geo
 hwc_dir="$rom_root/hardware/qcom-caf/sm8450/display"
 hwc_patch="$script_dir/patches/0003-HWC-mondrian-partial-update-handshake.patch"
 hwc_upgrade_patch="$script_dir/patches/0005-HWC-mondrian-worker-recovery.patch"
+sdm_roi_guard_patch="$script_dir/patches/0006-SDM-mondrian-ROI-off-vote.patch"
 kernel_dir="$rom_root/kernel/xiaomi/sm8450-modules"
 kernel_patch="$script_dir/patches/0004-M11A-full-frame-ROI-dirty.patch"
 
@@ -67,6 +68,7 @@ else
         preflight_patch "$hwc_dir" "$hwc_upgrade_patch" "Qualcomm HWC recovery"
     fi
 fi
+preflight_patch "$hwc_dir" "$sdm_roi_guard_patch" "Qualcomm SDM ROI OFF guard"
 preflight_patch "$kernel_dir" "$kernel_patch" "M11A ROI kernel"
 
 if [[ ! -f "$framework_dir/$settingslib_target" ]]; then
@@ -112,6 +114,7 @@ else
     apply_patch_once "$hwc_dir" "$hwc_patch" "Qualcomm HWC base"
     apply_patch_once "$hwc_dir" "$hwc_upgrade_patch" "Qualcomm HWC recovery"
 fi
+apply_patch_once "$hwc_dir" "$sdm_roi_guard_patch" "Qualcomm SDM ROI OFF guard"
 apply_patch_once "$kernel_dir" "$kernel_patch" "M11A ROI kernel"
 
 echo
