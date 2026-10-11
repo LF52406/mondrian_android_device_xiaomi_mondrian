@@ -1,0 +1,541 @@
+diff --git a/core/java/android/os/HapticEngineConfig.java b/core/java/android/os/HapticEngineConfig.java
+new file mode 100644
+index 000000000..72b759394
+--- /dev/null
++++ b/core/java/android/os/HapticEngineConfig.java
+@@ -0,0 +1,76 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++package android.os;
++
++/**
++ * Immutable, versioned configuration shared by the haptic service and its settings UI.
++ * One Secure setting makes profile/strength updates atomic and keeps them per user.
++ * @hide
++ */
++public final class HapticEngineConfig {
++    public static final String SETTINGS_KEY = "mondrian_haptic_engine";
++    public static final int VERSION = 1;
++    public static final int SOFT = 0;
++    public static final int BALANCED = 1;
++    public static final int CRISP = 2;
++    public static final int DEFAULT_STRENGTH = 60;
++
++    // Private system haptic constants; these require VIBRATE_SYSTEM_CONSTANTS.
++    public static final int PREVIEW_CLICK = 20001;
++    public static final int PREVIEW_DOUBLE = 20002;
++    public static final int PREVIEW_STEPS = 20003;
++
++    public static final HapticEngineConfig DEFAULT =
++            new HapticEngineConfig(false, BALANCED, DEFAULT_STRENGTH);
++    public final boolean enabled;
++    public final int profile;
++    public final int strength;
++
++    public HapticEngineConfig(boolean enabled, int profile, int strength) {
++        this.enabled = enabled;
++        this.profile = profile >= SOFT && profile <= CRISP ? profile : BALANCED;
++        this.strength = Math.max(0, Math.min(100, strength));
++    }
++
++    public static HapticEngineConfig parse(String value) {
++        if (value == null || value.length() > 64) return DEFAULT;
++        String[] fields = value.split(":", -1);
++        if (fields.length != 4) return DEFAULT;
++        try {
++            if (Integer.parseInt(fields[0]) != VERSION) return DEFAULT;
++            int enabled = Integer.parseInt(fields[1]);
++            if (enabled != 0 && enabled != 1) return DEFAULT;
++            return new HapticEngineConfig(enabled == 1,
++                    Integer.parseInt(fields[2]), Integer.parseInt(fields[3]));
++        } catch (NumberFormatException e) {
++            return DEFAULT;
++        }
++    }
++
++    public static boolean isPreview(int constant) {
++        return constant >= PREVIEW_CLICK && constant <= PREVIEW_STEPS;
++    }
++
++    /** Software gain, not a claim about the motor's measured acceleration. */
++    public float gain() {
++        return (float) Math.pow(strength / 100.0, 1.35);
++    }
++
++    @Override
++    public String toString() {
++        return VERSION + ":" + (enabled ? 1 : 0) + ":" + profile + ":" + strength;
++    }
++
++    @Override
++    public boolean equals(Object other) {
++        return other instanceof HapticEngineConfig config && enabled == config.enabled
++                && profile == config.profile && strength == config.strength;
++    }
++
++    @Override
++    public int hashCode() {
++        return ((enabled ? 1 : 0) * 31 + profile) * 31 + strength;
++    }
++}
+diff --git a/core/res/res/values/mondrian_haptic_engine.xml b/core/res/res/values/mondrian_haptic_engine.xml
+new file mode 100644
+index 000000000..de107ebe7
+--- /dev/null
++++ b/core/res/res/values/mondrian_haptic_engine.xml
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Copyright (C) 2026 The Android Open Source Project; SPDX-License-Identifier: Apache-2.0 -->
++<resources>
++    <!-- Device opt-in; the framework patch alone must not enable the engine. -->
++    <bool name="config_mondrianHapticEngineSupported">false</bool>
++    <bool name="config_mondrianHapticEngineTextHandleEnabled">false</bool>
++</resources>
+diff --git a/services/core/java/com/android/server/vibrator/HalVibration.java b/services/core/java/com/android/server/vibrator/HalVibration.java
+index fd593541c..01087cb89 100644
+--- a/services/core/java/com/android/server/vibrator/HalVibration.java
++++ b/services/core/java/com/android/server/vibrator/HalVibration.java
+@@ -59,6 +59,17 @@ final class HalVibration extends Vibration {
+     private float mScaleFactor;
+     /** Reported adaptive scale factor applied on top of the scale factor to the effect. */
+     private float mAdaptiveScale;
++    private boolean mHapticEngineEffect;
++
++    /** Set only by the system haptic path, before scheduling this vibration. */
++    void markHapticEngineEffect() {
++        mHapticEngineEffect = true;
++    }
++
++    boolean isHapticEngineEffect() {
++        return mHapticEngineEffect;
++    }
++
+ 
+     HalVibration(@NonNull VibrationSession.CallerInfo callerInfo,
+             @NonNull CombinedVibration effect) {
+@@ -104,6 +115,15 @@ final class HalVibration extends Vibration {
+      */
+     public void scaleEffects(VibrationScaler scaler) {
+         int vibrationUsage = callerInfo.attrs.getUsage();
++        if (mHapticEngineEffect) {
++            // The primitive scales already contain the selected percentage exactly once.
++            mScaleLevel = VibrationScaler.SCALE_NONE;
++            mScaleFactor = VibrationScaler.SCALE_FACTOR_NONE;
++            mAdaptiveScale = scaler.getAdaptiveHapticsScale(vibrationUsage);
++            stats.reportAdaptiveScale(mAdaptiveScale);
++            mEffectToPlay = mEffectToPlay.transform(scaler::scaleHapticEngineEffect, vibrationUsage);
++            return;
++        }
+ 
+         // Save scale values for debugging purposes.
+         mScaleLevel = scaler.getScaleLevel(vibrationUsage);
+diff --git a/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java b/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java
+index d44735b5b..d5366be20 100644
+--- a/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java
++++ b/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java
+@@ -19,6 +19,7 @@ package com.android.server.vibrator;
+ import android.annotation.NonNull;
+ import android.annotation.Nullable;
+ import android.content.res.Resources;
++import android.os.HapticEngineConfig;
+ import android.os.VibrationAttributes;
+ import android.os.VibrationEffect;
+ import android.os.VibratorInfo;
+@@ -49,6 +50,8 @@ public final class HapticFeedbackVibrationProvider {
+     private static final long[] SAFE_MODE_VIBRATION_TIMINGS = new long[] {0, 1, 20, 21, 500, 600};
+ 
+     private final VibratorInfo mVibratorInfo;
++    private final HapticProfileEngine mHapticProfileEngine;
++    private final boolean mHapticEngineTextHandleEnabled;
+     private final boolean mHapticTextHandleEnabled;
+ 
+     private final HapticFeedbackCustomization mHapticFeedbackCustomization;
+@@ -63,6 +66,12 @@ public final class HapticFeedbackVibrationProvider {
+     HapticFeedbackVibrationProvider(Resources res, VibratorInfo vibratorInfo,
+             HapticFeedbackCustomization hapticFeedbackCustomization) {
+         mVibratorInfo = vibratorInfo;
++        int supportId = res.getIdentifier("config_mondrianHapticEngineSupported", "bool", "android");
++        mHapticProfileEngine = new HapticProfileEngine(vibratorInfo,
++                supportId != 0 && res.getBoolean(supportId));
++        int textHandleId = res.getIdentifier(
++                "config_mondrianHapticEngineTextHandleEnabled", "bool", "android");
++        mHapticEngineTextHandleEnabled = textHandleId != 0 && res.getBoolean(textHandleId);
+         mHapticTextHandleEnabled = res.getBoolean(
+                 com.android.internal.R.bool.config_enableHapticTextHandle);
+         mHapticFeedbackCustomization = hapticFeedbackCustomization;
+@@ -196,7 +205,17 @@ public final class HapticFeedbackVibrationProvider {
+      * @param effectId the haptic feedback effect ID to check.
+      * @return true if the haptic feedback is restricted, false otherwise.
+      */
++    @Nullable
++    HapticProfileEngine.Result getHapticEngineEffect(int effectId, int usage,
++            HapticEngineConfig config) {
++        if (!isFeedbackConstantEnabled(effectId)
++                && !(effectId == HapticFeedbackConstants.TEXT_HANDLE_MOVE
++                && mHapticEngineTextHandleEnabled)) return null;
++        return mHapticProfileEngine.resolve(effectId, usage, config);
++    }
++
+     public boolean isRestrictedHapticFeedback(int effectId) {
++        if (HapticEngineConfig.isPreview(effectId)) return true;
+         switch (effectId) {
+             case HapticFeedbackConstants.BIOMETRIC_CONFIRM:
+             case HapticFeedbackConstants.BIOMETRIC_REJECT:
+diff --git a/services/core/java/com/android/server/vibrator/HapticProfileEngine.java b/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
+new file mode 100644
+index 000000000..95e446d83
+--- /dev/null
++++ b/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
+@@ -0,0 +1,137 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++package com.android.server.vibrator;
++
++import static android.os.VibrationEffect.Composition.*;
++import static android.view.HapticFeedbackConstants.*;
++
++import android.annotation.Nullable;
++import android.os.HapticEngineConfig;
++import android.os.VibrationAttributes;
++import android.os.VibrationEffect;
++import android.os.VibratorInfo;
++
++/** Maps semantic touch feedback to the device's existing RTP primitives. */
++final class HapticProfileEngine {
++    private static final int TICK = 1, FREQUENT = 2, CLICK = 3, HEAVY = 4;
++    private static final int RISE = 5, FALL = 6, DOUBLE = 7, STEPS = 8;
++    private static final Recipe[][] RECIPES = createRecipes();
++    private static final Result MUTED = new Result(null);
++    private final Result[] mCache = new Result[9];
++    private final boolean[] mCached = new boolean[9];
++    private HapticEngineConfig mCachedConfig;
++    private final VibratorInfo mInfo;
++    private final boolean mSupported;
++
++    HapticProfileEngine(VibratorInfo info, boolean supported) {
++        mInfo = info;
++        mSupported = supported;
++    }
++
++    /** A null effect explicitly mutes a handled event; a null Result requests stock fallback. */
++    static final class Result {
++        @Nullable final VibrationEffect effect;
++        Result(@Nullable VibrationEffect effect) { this.effect = effect; }
++    }
++
++    @Nullable
++    synchronized Result resolve(int constant, int usage, HapticEngineConfig config) {
++        if (!mSupported || !config.enabled) return null;
++        if (usage != VibrationAttributes.USAGE_TOUCH
++                && !(usage == VibrationAttributes.USAGE_HARDWARE_FEEDBACK
++                && (constant == SCROLL_TICK || constant == SCROLL_ITEM_FOCUS
++                || constant == SCROLL_LIMIT))) return null;
++        int kind = kindOf(constant);
++        if (kind == 0) return null;
++        if (config.strength == 0) return MUTED;
++        if (!config.equals(mCachedConfig)) {
++            java.util.Arrays.fill(mCached, false);
++            java.util.Arrays.fill(mCache, null);
++            mCachedConfig = config;
++        }
++        if (mCached[kind]) return mCache[kind];
++        mCached[kind] = true;
++        Recipe recipe = RECIPES[config.profile][kind];
++        if (mInfo.getCompositionSizeMax() > 0
++                && mInfo.getCompositionSizeMax() < recipe.primitives.length) return null;
++        for (int delay : recipe.delays) {
++            if (mInfo.getPrimitiveDelayMax() > 0 && delay > mInfo.getPrimitiveDelayMax()) return null;
++        }
++        for (int primitive : recipe.primitives) {
++            if (!mInfo.isPrimitiveSupported(primitive)) return null;
++        }
++        VibrationEffect.Composition composition = VibrationEffect.startComposition();
++        float gain = config.gain();
++        for (int i = 0; i < recipe.primitives.length; i++) {
++            composition.addPrimitive(recipe.primitives[i], recipe.scales[i] * gain,
++                    recipe.delays[i]);
++        }
++        return mCache[kind] = new Result(composition.compose());
++    }
++
++    private static Recipe[][] createRecipes() {
++        Recipe[][] recipes = new Recipe[3][9];
++        for (int profile = 0; profile < recipes.length; profile++) {
++            for (int kind = 1; kind < recipes[profile].length; kind++) {
++                recipes[profile][kind] = recipeFor(kind, profile);
++            }
++        }
++        return recipes;
++    }
++
++    private static int kindOf(int constant) {
++        return switch (constant) {
++            case TEXT_HANDLE_MOVE, CLOCK_TICK, SEGMENT_FREQUENT_TICK, SCROLL_TICK -> FREQUENT;
++            case VIRTUAL_KEY_RELEASE, DRAG_CROSSING, SEGMENT_TICK, TOGGLE_OFF -> TICK;
++            case VIRTUAL_KEY, CONTEXT_CLICK, CONFIRM, GESTURE_START, GESTURE_END,
++                    SCROLL_ITEM_FOCUS, TOGGLE_ON, HapticEngineConfig.PREVIEW_CLICK -> CLICK;
++            case LONG_PRESS, DRAG_START, SCROLL_LIMIT -> HEAVY;
++            case GESTURE_THRESHOLD_ACTIVATE -> RISE;
++            case GESTURE_THRESHOLD_DEACTIVATE -> FALL;
++            case HapticEngineConfig.PREVIEW_DOUBLE -> DOUBLE;
++            case HapticEngineConfig.PREVIEW_STEPS -> STEPS;
++            default -> 0;
++        };
++    }
++
++    /** Initial conservative recipes; physical tuning is documented separately. */
++    private static Recipe recipeFor(int kind, int profile) {
++        boolean soft = profile == HapticEngineConfig.SOFT;
++        boolean crisp = profile == HapticEngineConfig.CRISP;
++        int tick = soft ? PRIMITIVE_LOW_TICK : PRIMITIVE_TICK;
++        int click = soft ? PRIMITIVE_LOW_TICK : PRIMITIVE_CLICK;
++        float clickScale = soft ? .76f : crisp ? .94f : .84f;
++        float tickScale = soft ? .46f : crisp ? .72f : .58f;
++        return switch (kind) {
++            case FREQUENT -> one(tick, soft ? .25f : crisp ? .40f : .32f);
++            case TICK -> one(tick, tickScale);
++            case HEAVY -> soft ? one(PRIMITIVE_THUD, .64f)
++                    : crisp ? one(PRIMITIVE_CLICK, .98f)
++                    : sequence(new int[]{PRIMITIVE_THUD, PRIMITIVE_CLICK},
++                            new float[]{.72f, .30f}, new int[]{0, 8});
++            case RISE -> crisp ? one(PRIMITIVE_CLICK, .88f)
++                    : sequence(new int[]{PRIMITIVE_QUICK_RISE, click},
++                            new float[]{soft ? .36f : .54f, clickScale * .45f},
++                            new int[]{0, 0});
++            case FALL -> crisp ? one(PRIMITIVE_TICK, .62f)
++                    : one(PRIMITIVE_QUICK_FALL, soft ? .35f : .50f);
++            case DOUBLE -> sequence(new int[]{click, click},
++                    new float[]{clickScale, clickScale * .75f}, new int[]{0, 55});
++            case STEPS -> sequence(new int[]{tick, tick, tick},
++                    new float[]{tickScale, tickScale, tickScale}, new int[]{0, 75, 75});
++            default -> one(click, clickScale);
++        };
++    }
++
++    private static Recipe one(int primitive, float scale) {
++        return sequence(new int[]{primitive}, new float[]{scale}, new int[]{0});
++    }
++
++    private static Recipe sequence(int[] primitives, float[] scales, int[] delays) {
++        return new Recipe(primitives, scales, delays);
++    }
++
++    private record Recipe(int[] primitives, float[] scales, int[] delays) {}
++}
+diff --git a/services/core/java/com/android/server/vibrator/VibrationScaler.java b/services/core/java/com/android/server/vibrator/VibrationScaler.java
+index c6efe4340..0290450d3 100644
+--- a/services/core/java/com/android/server/vibrator/VibrationScaler.java
++++ b/services/core/java/com/android/server/vibrator/VibrationScaler.java
+@@ -140,6 +140,12 @@ final class VibrationScaler {
+                 .applyAdaptiveScale(adaptiveScale);
+     }
+ 
++    /** Keep adaptation on top of the engine's already resolved primitive scales. */
++    @NonNull
++    VibrationEffect scaleHapticEngineEffect(@NonNull VibrationEffect effect, int usageHint) {
++        return effect.applyAdaptiveScale(getAdaptiveHapticsScale(usageHint));
++    }
++
+     /**
+      * Scale a {@link PrebakedSegment} based on the given usage hint for this vibration.
+      *
+diff --git a/services/core/java/com/android/server/vibrator/VibrationSettings.java b/services/core/java/com/android/server/vibrator/VibrationSettings.java
+index a3de4b6c6..6dc5dde69 100644
+--- a/services/core/java/com/android/server/vibrator/VibrationSettings.java
++++ b/services/core/java/com/android/server/vibrator/VibrationSettings.java
+@@ -46,6 +46,7 @@ import android.media.AudioManager;
+ import android.net.Uri;
+ import android.os.BatteryManager;
+ import android.os.Handler;
++import android.os.HapticEngineConfig;
+ import android.os.PowerManager;
+ import android.os.PowerManagerInternal;
+ import android.os.PowerSaveState;
+@@ -176,6 +177,15 @@ final class VibrationSettings {
+     private final SparseArray<VibrationEffect> mFallbackEffects;
+ 
+     private final VibrationConfig mVibrationConfig;
++    @GuardedBy("mLock")
++    private HapticEngineConfig mHapticEngineConfig = HapticEngineConfig.DEFAULT;
++
++    HapticEngineConfig getHapticEngineConfig() {
++        synchronized (mLock) {
++            return mHapticEngineConfig;
++        }
++    }
++
+ 
+     @GuardedBy("mLock")
+     @Nullable
+@@ -270,6 +280,8 @@ final class VibrationSettings {
+                 new IntentFilter(AudioManager.INTERNAL_RINGER_MODE_CHANGED_ACTION),
+                 Context.RECEIVER_EXPORTED_UNAUDITED);
+ 
++        registerSettingsObserver(Settings.Secure.getUriFor(HapticEngineConfig.SETTINGS_KEY));
++
+         // Listen to all settings that might affect the result of Vibrator.getVibrationIntensity.
+         registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_INPUT_DEVICES));
+         registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_ON));
+@@ -532,6 +544,8 @@ final class VibrationSettings {
+ 
+     private void updateSettings(int userHandle) {
+         synchronized (mLock) {
++            mHapticEngineConfig = HapticEngineConfig.parse(Settings.Secure.getStringForUser(
++                    mContext.getContentResolver(), HapticEngineConfig.SETTINGS_KEY, userHandle));
+             mVibrateInputDevices =
+                     loadSystemSetting(Settings.System.VIBRATE_INPUT_DEVICES, 0, userHandle) > 0;
+             mVibrateOn = loadSystemSetting(Settings.System.VIBRATE_ON, 1, userHandle) > 0;
+@@ -665,6 +679,7 @@ final class VibrationSettings {
+             pw.println("VibrationSettings:");
+             pw.increaseIndent();
+             pw.println("vibrateOn = " + mVibrateOn);
++            pw.println("hapticEngine = " + mHapticEngineConfig);
+             pw.println("vibrateInputDevices = " + mVibrateInputDevices);
+             pw.println("batterySaverMode = " + mBatterySaverMode);
+             pw.println("ringerMode = " + ringerModeToString(mRingerMode));
+diff --git a/services/core/java/com/android/server/vibrator/VibratorManagerService.java b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
+index 3ac6a03f6..c1cd94201 100644
+--- a/services/core/java/com/android/server/vibrator/VibratorManagerService.java
++++ b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
+@@ -47,6 +47,7 @@ import android.os.CombinedVibration;
+ import android.os.ExternalVibration;
+ import android.os.ExternalVibrationScale;
+ import android.os.Handler;
++import android.os.HapticEngineConfig;
+ import android.os.IBinder;
+ import android.os.ICancellationSignal;
+ import android.os.IExternalVibratorService;
+@@ -65,6 +66,7 @@ import android.os.SystemClock;
+ import android.os.Trace;
+ import android.os.VibrationAttributes;
+ import android.os.VibrationEffect;
++import android.os.Vibrator;
+ import android.os.VibratorInfo;
+ import android.os.vibrator.Flags;
+ import android.os.vibrator.IHapticGeneratorSessionCallback;
+@@ -83,6 +85,7 @@ import android.util.Slog;
+ import android.util.SparseArray;
+ import android.util.proto.ProtoOutputStream;
+ import android.view.HapticFeedbackConstants;
++import android.view.InputDevice;
+ 
+ import com.android.internal.annotations.GuardedBy;
+ import com.android.internal.annotations.VisibleForTesting;
+@@ -608,9 +611,22 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+             logAndRecordPerformHapticFeedbackAttempt(uid, deviceId, opPkg, reason, ignoreStatus);
+             return null;
+         }
++        if (HapticEngineConfig.isPreview(constant)) {
++            // Preview must observe the completed UI write, not an older observer snapshot.
++            mVibrationSettings.update();
++        }
++        VibrationAttributes attrs = hapticVibrationProvider.getVibrationAttributes(
++                constant, usage, flags, privFlags);
++        HapticProfileEngine.Result engineEffect = deviceId == Context.DEVICE_ID_DEFAULT
++                && !mVibrationSettings.shouldVibrateInputDevices()
++                ? hapticVibrationProvider.getHapticEngineEffect(constant, attrs.getUsage(),
++                        mVibrationSettings.getHapticEngineConfig()) : null;
++        if (engineEffect != null) {
++            return performHapticEngineEffect(uid, deviceId, opPkg, constant, reason, token,
++                    engineEffect, attrs);
++        }
+         return performHapticFeedbackWithEffect(uid, deviceId, opPkg, constant, reason, token,
+-                hapticVibrationProvider.getVibration(constant, usage),
+-                hapticVibrationProvider.getVibrationAttributes(constant, usage, flags, privFlags));
++                hapticVibrationProvider.getVibration(constant, usage), attrs);
+     }
+ 
+     /**
+@@ -634,10 +650,41 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+             logAndRecordPerformHapticFeedbackAttempt(uid, deviceId, opPkg, reason, ignoreStatus);
+             return null;
+         }
++        VibrationAttributes attrs = hapticVibrationProvider.getVibrationAttributesForInputDevice(
++                constant, inputSource, flags, privFlags);
++        if (inputSource == InputDevice.SOURCE_TOUCHSCREEN
++                && deviceId == Context.DEVICE_ID_DEFAULT
++                && !mVibrationSettings.shouldVibrateInputDevices()) {
++            if (HapticEngineConfig.isPreview(constant)) mVibrationSettings.update();
++            HapticProfileEngine.Result engineEffect = hapticVibrationProvider.getHapticEngineEffect(
++                    constant, attrs.getUsage(), mVibrationSettings.getHapticEngineConfig());
++            if (engineEffect != null) {
++                return performHapticEngineEffect(uid, deviceId, opPkg, constant, reason, token,
++                        engineEffect, attrs);
++            }
++        }
+         return performHapticFeedbackWithEffect(uid, deviceId, opPkg, constant, reason, token,
+-                hapticVibrationProvider.getVibrationForInputDevice(constant, inputSource),
+-                hapticVibrationProvider.getVibrationAttributesForInputDevice(constant, inputSource,
+-                        flags, privFlags));
++                hapticVibrationProvider.getVibrationForInputDevice(constant, inputSource), attrs);
++    }
++
++    private HalVibration performHapticEngineEffect(int uid, int deviceId, String opPkg,
++            int constant, String reason, IBinder token, HapticProfileEngine.Result result,
++            VibrationAttributes attrs) {
++        if (result.effect == null
++                || mVibrationSettings.getCurrentIntensity(VibrationAttributes.USAGE_TOUCH)
++                        == Vibrator.VIBRATION_INTENSITY_OFF
++                || mVibrationSettings.getCurrentIntensity(attrs.getUsage())
++                        == Vibrator.VIBRATION_INTENSITY_OFF) {
++            logAndRecordPerformHapticFeedbackAttempt(uid, deviceId, opPkg, reason,
++                    Status.IGNORED_FOR_SETTINGS);
++            return null;
++        }
++        // An engine percentage must never re-enable globally disabled feedback.
++        attrs = new VibrationAttributes.Builder(attrs).setFlags(0,
++                VibrationAttributes.FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF).build();
++        CombinedVibration effect = CombinedVibration.createParallel(result.effect);
++        return vibrateInternal(uid, deviceId, opPkg, effect, attrs, reason, token,
++                /* hapticEngineEffect= */ true);
+     }
+ 
+     private HalVibration performHapticFeedbackWithEffect(int uid, int deviceId, String opPkg,
+@@ -680,6 +727,13 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+     private HalVibration vibrateInternal(int uid, int deviceId, String opPkg,
+             @NonNull CombinedVibration effect, @NonNull VibrationAttributes attrs,
+             String reason, IBinder token) {
++        return vibrateInternal(uid, deviceId, opPkg, effect, attrs, reason, token,
++                /* hapticEngineEffect= */ false);
++    }
++
++    private HalVibration vibrateInternal(int uid, int deviceId, String opPkg,
++            @NonNull CombinedVibration effect, @NonNull VibrationAttributes attrs,
++            String reason, IBinder token, boolean hapticEngineEffect) {
+         CallerInfo callerInfo = new CallerInfo(attrs, uid, deviceId, opPkg, reason);
+         if (token == null) {
+             Slog.e(TAG, "token must not be null");
+@@ -701,6 +755,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+         // Create Vibration.Stats as close to the received request as possible, for tracking.
+         SingleVibrationSession session = new SingleVibrationSession(token, callerInfo, effect);
+         HalVibration vib = session.getVibration();
++        if (hapticEngineEffect) vib.markHapticEngineEffect();
+         if (!Flags.removeHidlSupport()) {
+             vib.fillFallbacks(mVibrationSettings::getFallbackEffect);
+         }
+@@ -1178,12 +1233,20 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+                 updateAlwaysOnLocked(mAlwaysOnEffects.valueAt(i));
+             }
+ 
++            HapticEngineConfig engineConfig = mVibrationSettings.getHapticEngineConfig();
++            boolean engineMuted = !engineConfig.enabled || engineConfig.strength == 0;
++            if (engineMuted && mNextSession instanceof SingleVibrationSession next
++                    && next.getVibration().isHapticEngineEffect()) {
++                clearNextSessionLocked(Status.CANCELLED_BY_SETTINGS_UPDATE, null);
++            }
+             if (mCurrentSession == null) {
+                 return;
+             }
+ 
+             Status ignoreStatus = shouldIgnoreVibrationLocked(mCurrentSession.getCallerInfo());
+-            if (inputDevicesChanged || (ignoreStatus != null)) {
++            boolean cancelEngine = engineMuted && mCurrentSession instanceof SingleVibrationSession current
++                    && current.getVibration().isHapticEngineEffect();
++            if (inputDevicesChanged || cancelEngine || (ignoreStatus != null)) {
+                 if (DEBUG) {
+                     Slog.d(TAG, "Canceling vibration because settings changed: "
+                             + (ignoreStatus == null ? "input devices changed" : ignoreStatus));

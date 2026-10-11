@@ -1,0 +1,226 @@
+diff --git a/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java b/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java
+--- a/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java
++++ b/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java
+@@ -205,4 +205,10 @@
+         return mHapticProfileEngine.resolve(effectId, usage, config);
+     }
+ 
++    @Nullable
++    HapticProfileEngine.Result getHapticEngineDirectTouchEffect(
++            VibrationEffect effect, HapticEngineConfig config) {
++        return mHapticProfileEngine.resolveDirectTouch(effect, config);
++    }
++
+     public boolean isRestrictedHapticFeedback(int effectId) {
+diff --git a/services/core/java/com/android/server/vibrator/HapticProfileEngine.java b/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
+--- a/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
++++ b/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
+@@ -15,5 +15,11 @@
+ import android.os.VibrationAttributes;
+ import android.os.VibrationEffect;
+ import android.os.VibratorInfo;
++import android.os.vibrator.PrebakedSegment;
++import android.os.vibrator.PrimitiveSegment;
++import android.os.vibrator.VibrationEffectSegment;
++
++import java.util.ArrayList;
++import java.util.List;
+ 
+ /** Maps semantic touch feedback to the device's existing RTP primitives. */
+@@ -77,4 +83,53 @@
+         return mCache[kind] = new Result(composition.compose());
+     }
+ 
++    /**
++     * Adapts direct USAGE_TOUCH vibrations from trusted system UI callers.
++     *
++     * Launcher/Quickstep and parts of SystemUI use Vibrator.vibrate() directly instead of
++     * performHapticFeedback(), so without this path their effects bypass the profile engine.
++     * Repeating and non-haptic effects are deliberately left on the stock path.
++     */
++    @Nullable
++    synchronized Result resolveDirectTouch(VibrationEffect effect, HapticEngineConfig config) {
++        if (!mSupported || !config.enabled || !effect.isHapticFeedbackCandidate()) return null;
++        if (config.strength == 0) return MUTED;
++        if (!(effect instanceof VibrationEffect.Composed composed)
++                || composed.getRepeatIndex() >= 0) return null;
++
++        List<VibrationEffectSegment> segments = composed.getSegments();
++        if (segments.isEmpty()) return null;
++
++        if (segments.size() == 1 && segments.get(0) instanceof PrebakedSegment prebaked) {
++            int kind = kindOfPrebaked(prebaked.getEffectId());
++            if (kind == 0) return null;
++            Recipe recipe = recipeFor(kind, config.profile);
++            if (!isRecipeSupported(recipe)) return null;
++            return new Result(composeRecipe(recipe, config.gain()));
++        }
++
++        float gain = config.gain() * directProfileGain(config.profile);
++        ArrayList<VibrationEffectSegment> adapted = new ArrayList<>(segments.size());
++        for (VibrationEffectSegment segment : segments) {
++            if (segment instanceof PrimitiveSegment primitive) {
++                int primitiveId = remapDirectPrimitive(
++                        primitive.getPrimitiveId(), config.profile);
++                if (!mInfo.isPrimitiveSupported(primitiveId)) {
++                    primitiveId = primitive.getPrimitiveId();
++                }
++                if (!mInfo.isPrimitiveSupported(primitiveId)) return null;
++                adapted.add(new PrimitiveSegment(
++                        primitiveId,
++                        VibrationEffect.scale(primitive.getScale(), gain),
++                        primitive.getDelay(),
++                        primitive.getDelayType()));
++            } else {
++                adapted.add(segment.scale(gain));
++            }
++        }
++        VibrationEffect adaptedEffect = new VibrationEffect.Composed(adapted, -1);
++        adaptedEffect.validate();
++        return new Result(adaptedEffect);
++    }
++
+     private static Recipe[][] createRecipes() {
+@@ -111,1 +166,59 @@
++    private int kindOfPrebaked(int effectId) {
++        return switch (effectId) {
++            case VibrationEffect.EFFECT_TICK, VibrationEffect.EFFECT_TEXTURE_TICK -> TICK;
++            case VibrationEffect.EFFECT_HEAVY_CLICK, VibrationEffect.EFFECT_THUD -> HEAVY;
++            case VibrationEffect.EFFECT_DOUBLE_CLICK -> DOUBLE;
++            case VibrationEffect.EFFECT_CLICK, VibrationEffect.EFFECT_POP -> CLICK;
++            default -> 0;
++        };
++    }
++
++    private boolean isRecipeSupported(Recipe recipe) {
++        if (mInfo.getCompositionSizeMax() > 0
++                && mInfo.getCompositionSizeMax() < recipe.primitives.length) return false;
++        for (int delay : recipe.delays) {
++            if (mInfo.getPrimitiveDelayMax() > 0 && delay > mInfo.getPrimitiveDelayMax()) {
++                return false;
++            }
++        }
++        for (int primitive : recipe.primitives) {
++            if (!mInfo.isPrimitiveSupported(primitive)) return false;
++        }
++        return true;
++    }
++
++    private static VibrationEffect composeRecipe(Recipe recipe, float gain) {
++        VibrationEffect.Composition composition = VibrationEffect.startComposition();
++        for (int i = 0; i < recipe.primitives.length; i++) {
++            composition.addPrimitive(
++                    recipe.primitives[i], recipe.scales[i] * gain, recipe.delays[i]);
++        }
++        return composition.compose();
++    }
++
++    private static float directProfileGain(int profile) {
++        return switch (profile) {
++            case HapticEngineConfig.SOFT -> .88f;
++            case HapticEngineConfig.CRISP -> 1.05f;
++            default -> 1.0f;
++        };
++    }
++
++    private static int remapDirectPrimitive(int primitive, int profile) {
++        if (profile == HapticEngineConfig.SOFT) {
++            return switch (primitive) {
++                case PRIMITIVE_CLICK, PRIMITIVE_TICK -> PRIMITIVE_LOW_TICK;
++                default -> primitive;
++            };
++        }
++        if (profile == HapticEngineConfig.CRISP) {
++            return switch (primitive) {
++                case PRIMITIVE_LOW_TICK -> PRIMITIVE_TICK;
++                case PRIMITIVE_THUD -> PRIMITIVE_CLICK;
++                default -> primitive;
++            };
++        }
++        return primitive;
++    }
++
+     private static Recipe recipeFor(int kind, int profile) {
+diff --git a/services/core/java/com/android/server/vibrator/VibratorManagerService.java b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
+--- a/services/core/java/com/android/server/vibrator/VibratorManagerService.java
++++ b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
+@@ -690,1 +690,7 @@
++    private static boolean isHapticEngineDirectTouchCaller(String opPkg) {
++        return "com.android.systemui".equals(opPkg)
++                || "com.android.launcher3".equals(opPkg)
++                || "com.google.android.apps.nexuslauncher".equals(opPkg);
++    }
++
+     private HalVibration performHapticFeedbackWithEffect(int uid, int deviceId, String opPkg,
+@@ -723,6 +729,28 @@
+         attrs = fixupVibrationAttributes(attrs, effect);
+         mContext.enforceCallingOrSelfPermission(
+                 android.Manifest.permission.VIBRATE, "vibrate");
++
++        if (deviceId == Context.DEVICE_ID_DEFAULT
++                && attrs.getUsage() == VibrationAttributes.USAGE_TOUCH
++                && !mVibrationSettings.shouldVibrateInputDevices()
++                && isHapticEngineDirectTouchCaller(opPkg)
++                && effect instanceof CombinedVibration.Mono mono) {
++            HapticProfileEngine.Result engineEffect =
++                    getHapticVibrationProvider().getHapticEngineDirectTouchEffect(
++                            mono.getEffect(), mVibrationSettings.getHapticEngineConfig());
++            if (engineEffect != null) {
++                if (engineEffect.effect == null
++                        || !mVibrationSettings.shouldVibrateForHapticEngine(attrs.getUsage())) {
++                    return null;
++                }
++                attrs = new VibrationAttributes.Builder(attrs).setFlags(0,
++                        VibrationAttributes.FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF).build();
++                return vibrateInternal(uid, deviceId, opPkg,
++                        CombinedVibration.createParallel(engineEffect.effect), attrs, reason, token,
++                        /* hapticEngineEffect= */ true);
++            }
++        }
++
+         return vibrateInternal(uid, deviceId, opPkg, effect, attrs, reason, token);
+     }
+ 
+diff --git a/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java b/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java
+--- a/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java
++++ b/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileImpl.java
+@@ -310,9 +310,31 @@
+         mQSLogger.logTileClick(mTileSpec, mStatusBarStateController.getState(), mState.state,
+                 eventId);
+         if (!mFalsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
++            maybePerformHapticEngineTileClick();
+             mHandler.obtainMessage(H.CLICK, eventId, 0, expandable).sendToTarget();
+         }
+     }
+ 
++    private void maybePerformHapticEngineTileClick() {
++        android.os.Vibrator vibrator = mContext.getSystemService(android.os.Vibrator.class);
++        if (vibrator == null || !vibrator.hasVibrator()) return;
++
++        android.os.HapticEngineConfig config = android.os.HapticEngineConfig.parse(
++                android.provider.Settings.Secure.getStringForUser(
++                        mContext.getContentResolver(),
++                        android.os.HapticEngineConfig.SETTINGS_KEY,
++                        mCurrentTileUser.get()));
++        if (!config.enabled || config.strength == 0) return;
++
++        int effectId = mState instanceof BooleanState && ((BooleanState) mState).value
++                ? android.os.VibrationEffect.EFFECT_TICK
++                : android.os.VibrationEffect.EFFECT_CLICK;
++        android.media.AudioAttributes attrs = new android.media.AudioAttributes.Builder()
++                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
++                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
++                .build();
++        vibrator.vibrate(android.os.VibrationEffect.createPredefined(effectId), attrs);
++    }
++
+     @Override
+     public void secondaryClick(@Nullable Expandable expandable) {
+@@ -327,6 +348,7 @@
+         mQSLogger.logTileSecondaryClick(mTileSpec, mStatusBarStateController.getState(),
+                 mState.state, eventId);
+         if (!mFalsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
++            maybePerformHapticEngineTileClick();
+             mHandler.obtainMessage(H.SECONDARY_CLICK, eventId, 0, expandable).sendToTarget();
+         }
+     }

@@ -1,0 +1,93 @@
+diff --git a/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java b/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java
+--- a/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java
++++ b/services/core/java/com/android/server/vibrator/HapticFeedbackVibrationProvider.java
+@@ -205,6 +205,6 @@
+     @Nullable
+     HapticProfileEngine.Result getHapticEngineDirectTouchEffect(
+-            VibrationEffect effect, HapticEngineConfig config) {
+-        return mHapticProfileEngine.resolveDirectTouch(effect, config);
++            VibrationEffect effect, HapticEngineConfig config, String opPkg) {
++        return mHapticProfileEngine.resolveDirectTouch(effect, config, opPkg);
+     }
+ 
+diff --git a/services/core/java/com/android/server/vibrator/HapticProfileEngine.java b/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
+--- a/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
++++ b/services/core/java/com/android/server/vibrator/HapticProfileEngine.java
+@@ -93,13 +93,15 @@
+      */
+     @Nullable
+-    synchronized Result resolveDirectTouch(VibrationEffect effect, HapticEngineConfig config) {
++    synchronized Result resolveDirectTouch(
++            VibrationEffect effect, HapticEngineConfig config, String opPkg) {
+         if (!mSupported || !config.enabled || !effect.isHapticFeedbackCandidate()) return null;
+         if (config.strength == 0) return MUTED;
+         if (!(effect instanceof VibrationEffect.Composed composed)
+                 || composed.getRepeatIndex() >= 0) return null;
+ 
+         List<VibrationEffectSegment> segments = composed.getSegments();
+         if (segments.isEmpty()) return null;
++        boolean mistLauncherRecents = isMistLauncherRecentsScroll(opPkg, segments);
+ 
+         if (segments.size() == 1 && segments.get(0) instanceof PrebakedSegment prebaked) {
+             int kind = kindOfPrebaked(prebaked.getEffectId());
+@@ -113,7 +115,7 @@
+         for (VibrationEffectSegment segment : segments) {
+             if (segment instanceof PrimitiveSegment primitive) {
+                 int primitiveId = remapDirectPrimitive(
+-                        primitive.getPrimitiveId(), config.profile);
++                        primitive.getPrimitiveId(), config.profile, mistLauncherRecents);
+                 if (!mInfo.isPrimitiveSupported(primitiveId)) {
+                     primitiveId = primitive.getPrimitiveId();
+                 }
+@@ -166,6 +168,19 @@
+         return composition.compose();
+     }
+ 
++    private static boolean isMistLauncherRecentsScroll(
++            String opPkg, List<VibrationEffectSegment> segments) {
++        if (!"com.android.launcher3".equals(opPkg) || segments.size() != 1
++                || !(segments.get(0) instanceof PrimitiveSegment primitive)) {
++            return false;
++        }
++        // Mist Launcher3 Recents/quick-switch uses a single LOW_TICK at scale 0.6.
++        // Keep this signature narrow so taskbar/contextual-search haptics are untouched.
++        return primitive.getPrimitiveId() == PRIMITIVE_LOW_TICK
++                && primitive.getDelay() == 0
++                && Math.abs(primitive.getScale() - .6f) <= .01f;
++    }
++
+     private static float directProfileGain(int profile) {
+         return switch (profile) {
+             case HapticEngineConfig.SOFT -> .88f;
+@@ -174,7 +190,8 @@
+         };
+     }
+ 
+-    private static int remapDirectPrimitive(int primitive, int profile) {
++    private static int remapDirectPrimitive(
++            int primitive, int profile, boolean mistLauncherRecents) {
+         if (profile == HapticEngineConfig.SOFT) {
+             return switch (primitive) {
+                 case PRIMITIVE_CLICK, PRIMITIVE_TICK -> PRIMITIVE_LOW_TICK;
+@@ -183,5 +200,10 @@
+         }
+         if (profile == HapticEngineConfig.CRISP) {
++            // PRIMITIVE_TICK is exceptionally faint on mondrian for Mist Launcher Recents.
++            // Use the short CLICK primitive only for that exact Launcher3 scroll signature.
++            if (mistLauncherRecents && primitive == PRIMITIVE_LOW_TICK) {
++                return PRIMITIVE_CLICK;
++            }
+             return switch (primitive) {
+                 case PRIMITIVE_LOW_TICK -> PRIMITIVE_TICK;
+                 case PRIMITIVE_THUD -> PRIMITIVE_CLICK;
+diff --git a/services/core/java/com/android/server/vibrator/VibratorManagerService.java b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
+--- a/services/core/java/com/android/server/vibrator/VibratorManagerService.java
++++ b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
+@@ -738,6 +738,6 @@
+             HapticProfileEngine.Result engineEffect =
+                     getHapticVibrationProvider().getHapticEngineDirectTouchEffect(
+-                            mono.getEffect(), mVibrationSettings.getHapticEngineConfig());
++                            mono.getEffect(), mVibrationSettings.getHapticEngineConfig(), opPkg);
+             if (engineEffect != null) {
+                 if (engineEffect.effect == null
+                         || !mVibrationSettings.shouldVibrateForHapticEngine(attrs.getUsage())) {

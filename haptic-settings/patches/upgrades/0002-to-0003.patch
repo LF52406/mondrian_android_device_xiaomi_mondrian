@@ -1,0 +1,32 @@
+diff --git a/services/core/java/com/android/server/vibrator/VibratorManagerService.java b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
+index 5e9a6a89a..caece01d2 100644
+--- a/services/core/java/com/android/server/vibrator/VibratorManagerService.java
++++ b/services/core/java/com/android/server/vibrator/VibratorManagerService.java
+@@ -769,6 +769,11 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+ 
+             // Check if user settings or DnD is set to ignore this vibration.
+             Status ignoreStatus = shouldIgnoreVibrationLocked(callerInfo);
++            // Reject stale engine requests before they can interrupt or replace another session.
++            if (ignoreStatus == null && (isHapticEngineSuppressed(vib)
++                    || (vib.isHapticEngineEffect() && mInputDeviceDelegate.isAvailable()))) {
++                ignoreStatus = Status.IGNORED_FOR_SETTINGS;
++            }
+             CallerInfo ignoredBy = null;
+ 
+             // Check if ongoing vibration is more important than this vibration.
+@@ -1284,12 +1289,9 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
+     private Status startVibrationLocked(SingleVibrationSession session) {
+         Trace.traceBegin(TRACE_TAG_VIBRATOR, "startVibrationLocked");
+         try {
+-            HalVibration vibration = session.getVibration();
+-            if (isHapticEngineSuppressed(vibration)
+-                    || (vibration.isHapticEngineEffect() && mInputDeviceDelegate.isAvailable())) {
+-                return Status.IGNORED_FOR_SETTINGS;
+-            }
+-            if (mInputDeviceDelegate.isAvailable()) {
++            // Engine recipes remain on the phone if the delegate changes after admission.
++            if (!session.getVibration().isHapticEngineEffect()
++                    && mInputDeviceDelegate.isAvailable()) {
+                 return startVibrationOnInputDevicesLocked(session.getVibration());
+             }
+             if (mCurrentSession == null) {

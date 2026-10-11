@@ -1,0 +1,20 @@
+// Copyright (C) 2026 The Android Open Source Project
+// SPDX-License-Identifier: Apache-2.0
+android_app {
+    name: "MondrianHapticSettings",
+    srcs: ["src/**/*.java"],
+    resource_dirs: ["res"],
+    certificate: "platform",
+    platform_apis: true,
+    system_ext_specific: true,
+    privileged: true,
+    required: ["privapp-permissions-mondrian-haptics.xml"],
+    optimize: { proguard_flags_files: ["proguard.flags"] },
+}
+
+prebuilt_etc {
+    name: "privapp-permissions-mondrian-haptics.xml",
+    src: "permissions/privapp-permissions-mondrian-haptics.xml",
+    sub_dir: "permissions",
+    system_ext_specific: true,
+}
