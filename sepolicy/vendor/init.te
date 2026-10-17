@@ -1,3 +1,6 @@
 set_prop(init, vendor_mondrian_display_request_prop)
 get_prop(init, vendor_mondrian_display_state_prop)
 set_prop(init, vendor_mondrian_display_state_prop)
+
+# init is the only writer of the M11A partial-update sysfs parameter.
+allow init sysfs_mondrian_partial_update:file w_file_perms;

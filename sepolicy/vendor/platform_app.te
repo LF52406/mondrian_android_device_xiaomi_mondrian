@@ -1,0 +1,2 @@
+# MondrianDisplaySettings reads hardware state; writes use the property bridge.
+allow platform_app sysfs_mondrian_partial_update:file r_file_perms;
