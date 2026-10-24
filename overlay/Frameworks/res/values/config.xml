@@ -4,6 +4,9 @@
      SPDX-License-Identifier: Apache-2.0
 -->
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Poco F5 Pro: enable existing system-server PocketService and its Settings UI.
+         This does not enable pocket detection until the user turns on pocket_judge. -->
+    <bool name="config_pocketModeSupported">true</bool>
     <!-- Minimum screen brightness setting allowed by power manager.
          -2 is invalid so setting will resort to int value specified above.
          Set this to 0.0 to allow screen to go to minimal brightness.
